@@ -1,0 +1,78 @@
+services:
+
+  mcp-aggregator:
+    build:
+      context: ./aggregator
+      dockerfile: Dockerfile
+    container_name: mcp-aggregator
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      DATA_DIR: "/data"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:?ADMIN_TOKEN må settes – generer med: openssl rand -hex 32}"
+    volumes:
+      - mcp-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # OAuth 2.1 gateway – fronter all trafikk til mcp-aggregator.
+  # TLS og routing via Traefik (Coolify).
+  mcp-auth-proxy:
+    image: ghcr.io/sigbit/mcp-auth-proxy:latest
+    container_name: mcp-auth-proxy
+    restart: unless-stopped
+    environment:
+      EXTERNAL_URL: "https://${MCP_DOMAIN:?MCP_DOMAIN må settes}"
+      NO_AUTO_TLS: "true"
+      LISTEN: ":80"
+
+      # Kryptografiske nøkler – må være stabile på tvers av restarter.
+      # HMAC:    openssl rand -base64 32
+      # RSA:     openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 | base64 -w0
+      AUTH_HMAC_SECRET: "${AUTH_HMAC_SECRET:?AUTH_HMAC_SECRET må settes}"
+      JWT_PRIVATE_KEY: "${JWT_PRIVATE_KEY:?JWT_PRIVATE_KEY må settes}"
+
+      # GitHub OAuth – eneste provider.
+      # Registrer OAuth-app på: github.com/settings/developers
+      # Callback URL: https://<MCP_DOMAIN>/auth/callback
+      GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID må settes}"
+      GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET må settes}"
+      # Kommaseparert liste med tillatte GitHub-brukernavn (IKKE la stå tom).
+      GITHUB_ALLOWED_USERS: "${GITHUB_ALLOWED_USERS:?GITHUB_ALLOWED_USERS må settes}"
+
+      # Intern bearer-token som proxy injiserer på alle videresendte forespørsler.
+      # Bruker samme token som ADMIN_TOKEN – sikrer at bare proxy-en kan nå aggregatoren.
+      PROXY_BEARER_TOKEN: "${ADMIN_TOKEN}"
+
+      TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+      # Persistent OAuth-state (sessions overlever restart)
+      REPOSITORY_BACKEND: "sqlite"
+      REPOSITORY_DSN: "file:/data/mcp-auth.db?cache=shared&mode=rwc"
+
+    volumes:
+      - mcp-auth-data:/data
+    command: ["http://mcp-aggregator:8000"]
+    depends_on:
+      mcp-aggregator:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcp.rule=Host(`${MCP_DOMAIN}`)"
+      - "traefik.http.routers.mcp.entrypoints=https"
+      - "traefik.http.routers.mcp.tls=true"
+      - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mcp.loadbalancer.server.port=80"
+      # Hindrer buffering av SSE-streams i mellomliggende proxyer/CDN
+      - "traefik.http.middlewares.mcp-sse.headers.customResponseHeaders.X-Accel-Buffering=no"
+      - "traefik.http.routers.mcp.middlewares=mcp-sse"
+
+volumes:
+  mcp-data:
+    driver: local
+  mcp-auth-data:
+    driver: local
