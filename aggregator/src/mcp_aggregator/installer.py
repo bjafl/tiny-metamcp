@@ -11,8 +11,7 @@ logger = logging.getLogger(__name__)
 def build_command(config: ServerConfig) -> list[str]:
     """Return the subprocess command list to launch a child MCP server."""
     if config.type == ServerType.PYPI:
-        # uvx installs and runs the package in an isolated venv
-        return ["uvx", config.package, *config.args]
+        return _uvx_command(config.package, config.args)
 
     if config.type == ServerType.NPM:
         return ["npx", "--yes", config.package, *config.args]
@@ -20,10 +19,9 @@ def build_command(config: ServerConfig) -> list[str]:
     if config.type == ServerType.GIT:
         clone_dir = PACKAGES_DIR / config.name
         if (clone_dir / "pyproject.toml").exists() or (clone_dir / "setup.py").exists():
-            return ["uvx", "--from", str(clone_dir), config.package.split("/")[-1], *config.args]
+            return _uvx_command(str(clone_dir), config.args)
         if (clone_dir / "package.json").exists():
-            entry = _npm_main(clone_dir)
-            return ["node", entry, *config.args]
+            return ["node", _npm_main(clone_dir), *config.args]
         raise RuntimeError(f"Cannot detect runtime for git repo at {clone_dir}")
 
     if config.type == ServerType.CMD:
@@ -32,18 +30,35 @@ def build_command(config: ServerConfig) -> list[str]:
     raise ValueError(f"Unknown server type: {config.type}")
 
 
+def _uvx_command(source: str, args: list[str]) -> list[str]:
+    """
+    Build a uvx invocation.
+
+    If args[0] is a non-flag string it is treated as the entrypoint name and
+    --from is used so the install source and entrypoint can differ.  This
+    supports PyPI packages whose name differs from the console script, git
+    monorepo sub-packages (git+https://…#subdirectory=…), and local paths.
+
+    Without an explicit entrypoint the package name is used directly, which is
+    the common case for simple PyPI packages (uvx mcp-server-fetch).
+    """
+    if args and not args[0].startswith("-"):
+        entrypoint, rest = args[0], args[1:]
+        return ["uvx", "--from", source, entrypoint, *rest]
+    return ["uvx", source, *args]
+
+
 def _npm_main(clone_dir) -> str:
     import json
     pkg = json.loads((clone_dir / "package.json").read_text())
-    main = pkg.get("main", "index.js")
-    return str(clone_dir / main)
+    return str(clone_dir / pkg.get("main", "index.js"))
 
 
 async def install(config: ServerConfig) -> None:
     """Run any pre-installation step required before first launch."""
     if config.type == ServerType.GIT:
         await _git_clone(config)
-    # PyPI (uvx) and npm (npx) are self-installing on first run
+    # PYPI (uvx) and NPM (npx) install themselves on first run
 
 
 async def _git_clone(config: ServerConfig) -> None:
@@ -65,7 +80,7 @@ async def _git_clone(config: ServerConfig) -> None:
 
 
 async def uninstall(config: ServerConfig) -> None:
-    """Remove any locally installed files (git repos only)."""
+    """Remove locally installed files (git repos only)."""
     if config.type == ServerType.GIT:
         clone_dir = PACKAGES_DIR / config.name
         if clone_dir.exists():
