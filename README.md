@@ -173,7 +173,11 @@ npx @modelcontextprotocol/inspector
 
 ### Web UI
 
-Gå til `https://<MCP_DOMAIN>/admin` — logger inn med GitHub. Her kan du legge til, aktivere/deaktivere og slette MCP-servere.
+Gå til `https://<MCP_DOMAIN>/admin` — logger inn med GitHub. Her kan du:
+
+- **MCP Servere** — legge til, aktivere/deaktivere, restarte og slette servere
+- **Logger** — se aggregator-logger og child-prosessers stderr i sanntid (Live SSE-stream)
+- **Test verktøy** — velg en kjørende server og et verktøy, fyll inn JSON-argumenter og kall det direkte
 
 ### REST API
 
@@ -198,76 +202,187 @@ curl -X POST $BASE/api/servers/<id>/restart
 # Slett
 curl -X DELETE $BASE/api/servers/<id>
 
-# List alle tools
+# List alle tools (inkl. inputSchema)
 curl $BASE/api/tools | jq
+
+# Kall et verktøy
+curl -X POST $BASE/api/tools/call \
+  -H "Content-Type: application/json" \
+  -d '{"server":"<servernavn>","tool":"<toolnavn>","arguments":{"key":"value"}}'
+
+# Logger (siste 200 oppføringer)
+curl "$BASE/api/logs" | jq
+curl "$BASE/api/logs?server=<servernavn>" | jq
+
+# Child-prosessens stderr
+curl "$BASE/api/logs/<servernavn>/stderr" | jq
+
+# SSE live-stream (blokkerer, bruk med curl --no-buffer)
+curl --no-buffer "$BASE/api/logs/stream"
+curl --no-buffer "$BASE/api/logs/stream?server=<servernavn>"
 ```
 
-### Servertyper
+---
 
-| Type | Pakke-felt | Args | Eksempel |
-|------|-----------|------|---------|
-| `pypi` | PyPI-pakkenavn | – | `mcp-server-fetch` |
-| `pypi` | git+https URL eller lokal sti | entrypoint-navn | se under |
-| `npm` | npm-pakkenavn | – | `@modelcontextprotocol/server-filesystem` |
-| `git` | HTTPS git-URL (hel repo) | valgfritt entrypoint | `https://github.com/org/repo` |
-| `cmd` | Absolutt kommando | – | `/usr/local/bin/my-server` |
+## Servertyper og konfigurasjon
 
 Tools fra child-servere namespaces som `<servernavn>__<toolnavn>` for å unngå konflikter.
 
-### Git-monorepo subpakker (f.eks. mcp-tools)
+### `pypi` — Python-pakker via uvx
 
-For uv workspace-monorepoer med subpakker brukes `pypi`-typen med `git+https://…#subdirectory=`-URL. `uvx` håndterer installasjon og caching – ingen manuell kloning.
+Brukes for Python MCP-servere. `uvx` isolerer pakken og håndterer dependencies automatisk.
 
-**Via REST API:**
+**Enkel PyPI-pakke:**
+
+| Felt | Verdi |
+|------|-------|
+| Navn | `fetch` |
+| Type | `pypi` |
+| Pakke | `mcp-server-fetch` |
+| Args | – |
 
 ```bash
-# mcp-fetch-select
-curl -X POST http://localhost:8000/api/servers \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "fetch-select",
-    "type": "pypi",
-    "package": "git+https://github.com/<bruker>/mcp-tools#subdirectory=packages/mcp-fetch-select",
-    "args": ["mcp-fetch-select"]
-  }'
-
-# mcp-recipe-scraper
-curl -X POST http://localhost:8000/api/servers \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "recipe-scraper",
-    "type": "pypi",
-    "package": "git+https://github.com/<bruker>/mcp-tools#subdirectory=packages/mcp-recipe-scraper",
-    "args": ["mcp-recipe-scraper"]
-  }'
+curl -X POST $BASE/api/servers -H "Content-Type: application/json" \
+  -d '{"name":"fetch","type":"pypi","package":"mcp-server-fetch"}'
 ```
 
-**Via admin UI:**
+**PyPI-pakke der konsollscript-navn avviker fra pakkenavn** (args[0] = entrypoint):
 
 | Felt | Verdi |
 |------|-------|
-| Navn | `fetch-select` |
-| Type | `pypi` |
-| Pakke | `git+https://github.com/<bruker>/mcp-tools#subdirectory=packages/mcp-fetch-select` |
-| Args | `mcp-fetch-select` |
+| Pakke | `markitdown-mcp` |
+| Args | `markitdown-mcp` |
 
-**Privat repo** – legg GitHub-token i env-feltet:
+Kjører: `uvx --from markitdown-mcp markitdown-mcp`
+
+**Git-URL (enkelt repo):**
 
 | Felt | Verdi |
 |------|-------|
-| Pakke | `git+https://<token>@github.com/<bruker>/mcp-tools#subdirectory=packages/mcp-fetch-select` |
+| Pakke | `git+https://github.com/org/repo` |
+| Args | `entrypoint-navn` |
 
-Eller som env-variabel via API:
+Kjører: `uvx --from git+https://github.com/org/repo entrypoint-navn`
+
+**Git-URL, monorepo med subpakke (`#subdirectory=`):**
+
+| Felt | Verdi |
+|------|-------|
+| Pakke | `git+https://github.com/org/repo#subdirectory=packages/my-server` |
+| Args | `my-server` |
+
+Kjører: `uvx --from git+https://...#subdirectory=packages/my-server my-server`
+
+**Privat repo** — token i pakke-URL:
+
+| Felt | Verdi |
+|------|-------|
+| Pakke | `git+https://<token>@github.com/org/repo#subdirectory=packages/my-server` |
+
+Eller som env-variabel:
 
 ```bash
 -d '{
-  "name": "fetch-select",
-  "type": "pypi",
-  "package": "git+https://github.com/<bruker>/mcp-tools#subdirectory=packages/mcp-fetch-select",
-  "args": ["mcp-fetch-select"],
-  "env": {"GIT_ASKPASS": "echo", "GITHUB_TOKEN": "<token>"}
+  "name":"my-server","type":"pypi",
+  "package":"git+https://github.com/org/repo#subdirectory=packages/my-server",
+  "args":["my-server"],
+  "env":{"GIT_ASKPASS":"echo","GITHUB_TOKEN":"<token>"}
 }'
 ```
+
+---
+
+### `npm` — Node.js/TypeScript-pakker via npx
+
+Brukes for Node.js og TypeScript MCP-servere. `npx --yes` laster ned og kjører pakken direkte.
+
+**Publisert npm-pakke:**
+
+| Felt | Verdi |
+|------|-------|
+| Navn | `filesystem` |
+| Type | `npm` |
+| Pakke | `@modelcontextprotocol/server-filesystem` |
+| Args | `/tillatt/mappe` |
+
+```bash
+curl -X POST $BASE/api/servers -H "Content-Type: application/json" \
+  -d '{"name":"filesystem","type":"npm","package":"@modelcontextprotocol/server-filesystem","args":["/data"]}'
+```
+
+**TypeScript-repo fra GitHub (ikke publisert til npm):**
+
+| Felt | Verdi |
+|------|-------|
+| Pakke | `git+https://github.com/org/ts-mcp-server` |
+| Args | – |
+
+Kjører: `npx --yes git+https://github.com/org/ts-mcp-server`
+
+npm kloner repoet, kjører `npm install` og `prepare`-scriptet (TypeScript-kompilering), og starter binæren fra `bin`-feltet i `package.json`. Forutsetter at pakken har korrekt `prepare`-script og `bin`-oppføring.
+
+**GitHub-kortform og andre npm-støttede URL-formater:**
+
+```
+git+https://github.com/org/repo          # full HTTPS
+git+ssh://git@github.com/org/repo        # SSH
+github:org/repo                          # GitHub-kortform
+```
+
+**Privat TypeScript-repo:**
+
+| Felt | Verdi |
+|------|-------|
+| Pakke | `git+https://<token>@github.com/org/ts-mcp-server` |
+
+---
+
+### `git` — klon og kjør lokalt
+
+Kloner hele repoet til `/data/packages/<navn>` og kjører det derfra. Brukes primært for Python-repoer uten PyPI-publisering.
+
+- **Python-repo** (`pyproject.toml` / `setup.py`): kjøres via `uvx --from <klon-mappe>`
+- **Node.js-repo** (`package.json`): kjøres via `node <main>` etter automatisk `npm install` og `npm run build`
+
+| Felt | Verdi |
+|------|-------|
+| Navn | `my-server` |
+| Type | `git` |
+| Pakke | `https://github.com/org/repo` |
+| Args | evt. entrypoint (Python) |
+
+```bash
+curl -X POST $BASE/api/servers -H "Content-Type: application/json" \
+  -d '{"name":"my-server","type":"git","package":"https://github.com/org/repo"}'
+```
+
+> **Merk:** For TypeScript-repoer fra GitHub er `npm`-modus med `git+https://`-URL enklere — npm cacher globalt og slipper lokal kloning.
+
+---
+
+### `cmd` — direkte kommando
+
+Kjører en vilkårlig kommando. Nyttig for lokalt installerte servere eller custom scripts.
+
+| Felt | Verdi |
+|------|-------|
+| Navn | `my-tool` |
+| Type | `cmd` |
+| Pakke | `/usr/local/bin/my-mcp-server` |
+| Args | `--config /data/config.json` |
+
+Pakke-feltet splittes på mellomrom og slås sammen med args: `/usr/local/bin/my-mcp-server --config /data/config.json`
+
+---
+
+### Oversikt
+
+| Type | Installasjon | Beste for |
+|------|-------------|-----------|
+| `pypi` | `uvx` (isolert) | Python MCP-servere fra PyPI eller git |
+| `npm` | `npx` (cachet) | Node.js/TS fra npm eller GitHub |
+| `git` | Klon → kjør lokalt | Upubliserte Python-repoer |
+| `cmd` | Ingen | Lokalt installerte binærer |
 
 ---
 
@@ -304,9 +419,10 @@ Eller som env-variabel via API:
         ├── main.py              FastAPI-app, lifespan, ruter
         ├── aggregator.py        MCP SSE-server + tool-aggregering
         ├── child_manager.py     Prosess­livssyklus for child-servere
-        ├── installer.py         uvx / npx / git clone
+        ├── installer.py         uvx / npx / git clone + npm build
         ├── database.py          SQLite via aiosqlite
         ├── config.py            Env-var innstillinger
+        ├── log_capture.py       In-memory loggbuffer + SSE pub-sub
         ├── ui.py                HTMX + Alpine.js admin UI
         └── api/routers.py       REST API
 ```
