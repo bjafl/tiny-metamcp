@@ -1,9 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Security
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..child_manager import child_manager
-from ..config import ADMIN_TOKEN
 from ..database import (
     ServerConfig,
     ServerType,
@@ -16,14 +14,6 @@ from ..database import (
 from ..installer import uninstall
 
 router = APIRouter()
-_bearer = HTTPBearer(auto_error=False)
-
-
-def _check_token(creds: HTTPAuthorizationCredentials | None = Security(_bearer)) -> None:
-    if not ADMIN_TOKEN:
-        return  # token check disabled (dev mode)
-    if creds is None or creds.credentials != ADMIN_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid or missing token")
 
 
 # ── Server management ────────────────────────────────────────────────────────
@@ -36,7 +26,7 @@ class AddServerRequest(BaseModel):
     env: dict[str, str] = {}
 
 
-@router.get("/servers", dependencies=[Depends(_check_token)])
+@router.get("/servers")
 async def api_list_servers():
     servers = await list_servers()
     running = {s["name"]: s for s in child_manager.status()}
@@ -51,7 +41,7 @@ async def api_list_servers():
     ]
 
 
-@router.post("/servers", status_code=201, dependencies=[Depends(_check_token)])
+@router.post("/servers", status_code=201)
 async def api_add_server(req: AddServerRequest):
     try:
         config = await add_server(req.name, req.type, req.package, req.args, req.env)
@@ -69,7 +59,7 @@ async def api_add_server(req: AddServerRequest):
     return {"server": _cfg(config), "tools": tools}
 
 
-@router.delete("/servers/{server_id}", dependencies=[Depends(_check_token)])
+@router.delete("/servers/{server_id}")
 async def api_delete_server(server_id: int):
     config = await get_server(server_id)
     if not config:
@@ -80,7 +70,7 @@ async def api_delete_server(server_id: int):
     return {"deleted": server_id}
 
 
-@router.post("/servers/{server_id}/enable", dependencies=[Depends(_check_token)])
+@router.post("/servers/{server_id}/enable")
 async def api_enable_server(server_id: int):
     config = await get_server(server_id)
     if not config:
@@ -94,7 +84,7 @@ async def api_enable_server(server_id: int):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.post("/servers/{server_id}/disable", dependencies=[Depends(_check_token)])
+@router.post("/servers/{server_id}/disable")
 async def api_disable_server(server_id: int):
     config = await get_server(server_id)
     if not config:
@@ -104,7 +94,7 @@ async def api_disable_server(server_id: int):
     return {"id": server_id, "enabled": False}
 
 
-@router.post("/servers/{server_id}/restart", dependencies=[Depends(_check_token)])
+@router.post("/servers/{server_id}/restart")
 async def api_restart_server(server_id: int):
     config = await get_server(server_id)
     if not config:
@@ -120,7 +110,7 @@ async def api_restart_server(server_id: int):
 
 # ── Tools ────────────────────────────────────────────────────────────────────
 
-@router.get("/tools", dependencies=[Depends(_check_token)])
+@router.get("/tools")
 async def api_list_tools():
     return [
         {"server": name, "tool": tool.name, "description": tool.description}

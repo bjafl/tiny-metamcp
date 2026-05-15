@@ -1,9 +1,8 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Security
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .aggregator import mcp_server, sse_transport
 from .api.routers import router as api_router
@@ -34,25 +33,22 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="MCP Aggregator", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.include_router(api_router, prefix="/api")
 
-# ── Auth helpers ─────────────────────────────────────────────────────────────
 
-_bearer = HTTPBearer(auto_error=False)
+# ── Auth ──────────────────────────────────────────────────────────────────────
 
-
-def _require_token(
-    creds: HTTPAuthorizationCredentials | None = Security(_bearer),
-) -> None:
+def _check_bearer(request: Request) -> None:
+    """Bearer-token check for MCP endpoints (oauth2-proxy skips these)."""
     if not ADMIN_TOKEN:
         return
-    if creds is None or creds.credentials != ADMIN_TOKEN:
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer ") or auth[7:] != ADMIN_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 # ── MCP SSE transport ─────────────────────────────────────────────────────────
 
 @app.get("/mcp")
-async def mcp_sse(request: Request):
-    """MCP SSE endpoint – protected by mcp-auth-proxy upstream."""
+async def mcp_sse(request: Request, _: None = Depends(_check_bearer)):
     async with sse_transport.connect_sse(
         request.scope, request.receive, request._send
     ) as (read, write):
@@ -60,29 +56,25 @@ async def mcp_sse(request: Request):
 
 
 @app.post("/messages")
-async def mcp_messages(request: Request):
-    """MCP SSE message post-back endpoint."""
+async def mcp_messages(request: Request, _: None = Depends(_check_bearer)):
     await sse_transport.handle_post_message(request.scope, request.receive, request._send)
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
+# ── Health (ingen auth – brukes av Docker healthcheck) ───────────────────────
 
 @app.get("/health")
 async def health():
-    return {
-        "status": "ok",
-        "servers": child_manager.status(),
-    }
+    return {"status": "ok", "servers": child_manager.status()}
 
 
-# ── Admin UI (HTMX) ───────────────────────────────────────────────────────────
+# ── Admin UI (HTMX) – beskyttet av oauth2-proxy oppstrøms ────────────────────
 
-@app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(_require_token)])
+@app.get("/admin", response_class=HTMLResponse)
 async def admin_root():
     return ADMIN_HTML
 
 
-@app.get("/admin/servers-table", response_class=HTMLResponse, dependencies=[Depends(_require_token)])
+@app.get("/admin/servers-table", response_class=HTMLResponse)
 async def admin_servers_table():
     servers = await list_servers()
     running_map = {s["name"]: s for s in child_manager.status()}
@@ -97,7 +89,7 @@ async def admin_servers_table():
     return servers_table_html(enriched)
 
 
-@app.post("/admin/add-server", response_class=HTMLResponse, dependencies=[Depends(_require_token)])
+@app.post("/admin/add-server", response_class=HTMLResponse)
 async def admin_add_server(request: Request):
     form = await request.form()
     name = form.get("name", "").strip()
@@ -120,15 +112,12 @@ async def admin_add_server(request: Request):
 
     try:
         state = await child_manager.add(config)
-        tools = [t.name for t in state.tools]
-        return add_result_html(
-            {"name": config.name}, tools, None
-        )
+        return add_result_html({"name": config.name}, [t.name for t in state.tools], None)
     except Exception as exc:
         return add_result_html({"name": config.name}, [], str(exc))
 
 
-@app.post("/admin/servers/{server_id}/enable", response_class=HTMLResponse, dependencies=[Depends(_require_token)])
+@app.post("/admin/servers/{server_id}/enable", response_class=HTMLResponse)
 async def admin_enable(server_id: int):
     from .database import get_server
     config = await get_server(server_id)
@@ -140,7 +129,7 @@ async def admin_enable(server_id: int):
     return ""
 
 
-@app.post("/admin/servers/{server_id}/disable", response_class=HTMLResponse, dependencies=[Depends(_require_token)])
+@app.post("/admin/servers/{server_id}/disable", response_class=HTMLResponse)
 async def admin_disable(server_id: int):
     from .database import get_server
     config = await get_server(server_id)
@@ -151,7 +140,7 @@ async def admin_disable(server_id: int):
     return ""
 
 
-@app.post("/admin/servers/{server_id}/restart", response_class=HTMLResponse, dependencies=[Depends(_require_token)])
+@app.post("/admin/servers/{server_id}/restart", response_class=HTMLResponse)
 async def admin_restart(server_id: int):
     from .database import get_server
     config = await get_server(server_id)
@@ -161,11 +150,10 @@ async def admin_restart(server_id: int):
     return ""
 
 
-@app.delete("/admin/servers/{server_id}", response_class=HTMLResponse, dependencies=[Depends(_require_token)])
+@app.delete("/admin/servers/{server_id}", response_class=HTMLResponse)
 async def admin_delete(server_id: int):
-    from .database import get_server
+    from .database import get_server, delete_server
     from .installer import uninstall
-    from .database import delete_server
     config = await get_server(server_id)
     if not config:
         raise HTTPException(404)
