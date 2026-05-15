@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
+from . import log_capture
 from .aggregator import mcp_server, sse_transport
 from .api.routers import router as api_router
 from .child_manager import child_manager
@@ -12,6 +13,7 @@ from .database import ServerType, add_server, init_db, list_servers, update_serv
 from .ui import ADMIN_HTML, add_result_html, servers_table_html
 
 logging.basicConfig(level=LOG_LEVEL)
+log_capture.setup()
 logger = logging.getLogger(__name__)
 
 

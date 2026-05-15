@@ -1,6 +1,9 @@
-from fastapi import APIRouter, HTTPException
+import json as _json
+
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from .. import log_capture
 from ..child_manager import child_manager
 from ..database import (
     ServerConfig,
@@ -113,9 +116,67 @@ async def api_restart_server(server_id: int):
 @router.get("/tools")
 async def api_list_tools():
     return [
-        {"server": name, "tool": tool.name, "description": tool.description}
+        {
+            "server": name,
+            "tool": tool.name,
+            "description": tool.description,
+            "inputSchema": tool.inputSchema,
+        }
         for name, tool in child_manager.all_tools()
     ]
+
+
+class CallToolRequest(BaseModel):
+    server: str
+    tool: str
+    arguments: dict = {}
+
+
+@router.post("/tools/call")
+async def api_call_tool(req: CallToolRequest):
+    state = child_manager.get(req.server)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Server '{req.server}' not found")
+    if not state.running:
+        raise HTTPException(status_code=503, detail=f"Server '{req.server}' is not running")
+    try:
+        result = await state.session.call_tool(req.tool, req.arguments)
+        content = [
+            c.model_dump() if hasattr(c, "model_dump") else {"type": "unknown", "raw": str(c)}
+            for c in result.content
+        ]
+        return {
+            "server": req.server,
+            "tool": req.tool,
+            "content": content,
+            "isError": result.isError or False,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Logs ────────────────────────────────────────────────────────────────────
+
+@router.get("/logs")
+async def api_get_logs(server: str | None = None, limit: int = 200):
+    return log_capture.get_entries(server=server, limit=limit)
+
+
+@router.get("/logs/stream")
+async def api_stream_logs(request: Request, server: str | None = None):
+    from sse_starlette.sse import EventSourceResponse
+
+    async def generator():
+        async for entry in log_capture._broker.subscribe(server=server):
+            yield {"data": _json.dumps(entry.as_dict())}
+
+    return EventSourceResponse(generator())
+
+
+@router.get("/logs/{server_name}/stderr")
+async def api_get_stderr(server_name: str, limit: int = 200):
+    lines = log_capture.read_log_file(server_name, limit=limit)
+    return {"server": server_name, "lines": lines}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
