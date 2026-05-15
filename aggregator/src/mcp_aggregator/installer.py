@@ -78,6 +78,36 @@ async def _git_clone(config: ServerConfig) -> None:
     if proc.returncode != 0:
         raise RuntimeError(f"git clone failed: {stderr.decode().strip()}")
 
+    if (clone_dir / "package.json").exists():
+        await _npm_install_and_build(clone_dir)
+
+
+async def _npm_install_and_build(clone_dir) -> None:
+    import json as _json
+    logger.info("npm install: %s", clone_dir)
+    proc = await asyncio.create_subprocess_exec(
+        "npm", "install", "--prefer-offline",
+        cwd=str(clone_dir),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"npm install failed: {stderr.decode().strip()}")
+
+    pkg = _json.loads((clone_dir / "package.json").read_text())
+    if "build" in pkg.get("scripts", {}):
+        logger.info("npm run build: %s", clone_dir)
+        proc = await asyncio.create_subprocess_exec(
+            "npm", "run", "build",
+            cwd=str(clone_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"npm run build failed: {stderr.decode().strip()}")
+
 
 async def uninstall(config: ServerConfig) -> None:
     """Remove locally installed files (git repos only)."""
