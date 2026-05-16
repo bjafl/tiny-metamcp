@@ -1,122 +1,69 @@
 import json
-from dataclasses import dataclass, field
-from enum import Enum
 
-import aiosqlite
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlmodel import SQLModel, select
 
 from .config import DB_PATH
+from .models import OAuthToken, Server, ServerType  # noqa: F401 – re-exported for callers
 
-
-class ServerType(str, Enum):
-    PYPI = "pypi"
-    NPM = "npm"
-    GIT = "git"
-    CMD = "cmd"
-
-
-@dataclass
-class ServerConfig:
-    id: int
-    name: str
-    type: ServerType
-    package: str
-    args: list[str] = field(default_factory=list)
-    env: dict[str, str] = field(default_factory=dict)
-    enabled: bool = True
-
-
-def _row_to_config(row: tuple) -> ServerConfig:
-    return ServerConfig(
-        id=row[0],
-        name=row[1],
-        type=ServerType(row[2]),
-        package=row[3],
-        args=json.loads(row[4]),
-        env=json.loads(row[5]),
-        enabled=bool(row[6]),
-    )
+_DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
+_engine = create_async_engine(_DATABASE_URL)
+_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    _engine, expire_on_commit=False
+)
 
 
 async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS servers (
-                id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                name    TEXT    UNIQUE NOT NULL,
-                type    TEXT    NOT NULL,
-                package TEXT    NOT NULL,
-                args    TEXT    NOT NULL DEFAULT '[]',
-                env     TEXT    NOT NULL DEFAULT '{}',
-                enabled INTEGER NOT NULL DEFAULT 1
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS oauth_tokens (
-                token       TEXT PRIMARY KEY,
-                token_type  TEXT NOT NULL,
-                github_user TEXT NOT NULL,
-                client_id   TEXT NOT NULL,
-                expires_at  REAL NOT NULL,
-                created_at  REAL NOT NULL DEFAULT (unixepoch())
-            )
-        """)
-        await db.commit()
+    async with _engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
 
 
-async def list_servers() -> list[ServerConfig]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT id, name, type, package, args, env, enabled FROM servers ORDER BY id"
-        )
-        return [_row_to_config(r) for r in await cur.fetchall()]
+# ── Servers ───────────────────────────────────────────────────────────────────
+
+async def list_servers() -> list[Server]:
+    async with _session_factory() as session:
+        result = await session.execute(select(Server).order_by(Server.id))
+        return list(result.scalars().all())
 
 
-async def get_server(server_id: int) -> ServerConfig | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT id, name, type, package, args, env, enabled FROM servers WHERE id = ?",
-            (server_id,),
-        )
-        row = await cur.fetchone()
-        return _row_to_config(row) if row else None
+async def get_server(server_id: int) -> Server | None:
+    async with _session_factory() as session:
+        return await session.get(Server, server_id)
 
 
 async def add_server(
     name: str,
-    type: ServerType,
+    server_type: ServerType,
     package: str,
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
-) -> ServerConfig:
-    args = args or []
-    env = env or {}
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "INSERT INTO servers (name, type, package, args, env) VALUES (?, ?, ?, ?, ?)",
-            (name, type.value, package, json.dumps(args), json.dumps(env)),
-        )
-        await db.commit()
-        return ServerConfig(
-            id=cur.lastrowid,
-            name=name,
-            type=type,
-            package=package,
-            args=args,
-            env=env,
-            enabled=True,
-        )
+) -> Server:
+    server = Server(
+        name=name,
+        type=server_type.value if isinstance(server_type, ServerType) else server_type,
+        package=package,
+        args=json.dumps(args or []),
+        env=json.dumps(env or {}),
+    )
+    async with _session_factory() as session:
+        session.add(server)
+        await session.commit()
+        await session.refresh(server)
+    return server
 
 
 async def update_server_enabled(server_id: int, enabled: bool) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE servers SET enabled = ? WHERE id = ?", (int(enabled), server_id)
-        )
-        await db.commit()
+    async with _session_factory() as session:
+        server = await session.get(Server, server_id)
+        if server:
+            server.enabled = enabled
+            await session.commit()
 
 
 async def delete_server(server_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM servers WHERE id = ?", (server_id,))
-        await db.commit()
+    async with _session_factory() as session:
+        server = await session.get(Server, server_id)
+        if server:
+            await session.delete(server)
+            await session.commit()

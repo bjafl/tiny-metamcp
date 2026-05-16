@@ -1,156 +1,121 @@
 # tiny-metamcp
 
-Lettvekts MCP-aggregator for self-hosted Coolify-deployment. Samler MCP-servere fra PyPI, npm og git-repoer bak ett enkelt endepunkt med GitHub OAuth-beskyttelse.
+Lightweight self-hosted MCP aggregator for Coolify. Aggregates MCP servers from PyPI, npm, and git repositories behind a single endpoint with GitHub OAuth authentication.
 
-Inspirert av [MetaMCP](https://github.com/metatool-ai/metatool-app), men uten stabilitets­problemene.
+Inspired by [MetaMCP](https://github.com/metatool-ai/metatool-app).
 
-## Arkitektur
+## Architecture
 
 ```
-Klient (Claude Desktop e.l.)
-        │  Bearer ADMIN_TOKEN
+MCP Client (Claude Web UI, Claude Desktop, etc.)
+        │  OAuth 2.1 + PKCE  OR  Bearer ADMIN_TOKEN
         ▼
-   Traefik (Coolify) ── TLS / Let's Encrypt
+   Traefik (Coolify) — TLS / Let's Encrypt
         │
         ▼
-   oauth2-proxy ────── GitHub OAuth (nettleser)
-        │  alle ruter
-        ▼
    mcp-aggregator  (FastAPI + Python MCP SDK)
-    ├── /mcp        SSE-endepunkt  ← MCP-klienter
-    ├── /admin      Web UI         ← nettleser (GitHub-innlogget)
-    ├── /api        REST API       ← nettleser (GitHub-innlogget)
-    └── /health     Helsesjekk     ← Docker
+    ├── /mcp        SSE endpoint  ← MCP clients
+    ├── /admin      Web UI        ← browser (GitHub login)
+    ├── /api        REST API      ← browser session or Bearer token
+    └── /health     Health check  ← Docker
          │
-         ├── child: uvx <pakke>        (PyPI)
-         ├── child: npx <pakke>        (npm)
+         ├── child: uvx <package>       (PyPI)
+         ├── child: npx <package>       (npm)
          └── child: git clone + run    (git)
 ```
 
-**Auth-modell:**
-- **Nettleser → `/admin`, `/api`** — GitHub OAuth via oauth2-proxy. Kun brukernavn i `GITHUB_ALLOWED_USERS` slipper inn.
-- **MCP-klient → `/mcp`** — Bearer-token (`ADMIN_TOKEN`). oauth2-proxy slipper disse gjennom uten OAuth-sjekk.
+**Auth model:**
+- **Browser → `/admin`, `/api`** — GitHub OAuth via signed session cookies. Only usernames in `GITHUB_ALLOWED_USERS` are allowed in.
+- **MCP client → `/mcp`** — OAuth 2.1 + PKCE (Claude Web UI connectors) or static `ADMIN_TOKEN` bearer token (Claude Desktop etc.).
+- **Claude Web UI** — Full OAuth 2.1 flow: discovery → dynamic client registration → PKCE authorize → GitHub login → token exchange. No manual token needed.
 
-## Forutsetninger
+## Prerequisites
 
 - Docker + Docker Compose
-- [`just`](https://github.com/casey/just) (`cargo install just` eller `brew install just`)
-- GitHub OAuth-app (se oppsett under)
+- [`just`](https://github.com/casey/just) (`cargo install just` or `brew install just`)
+- A GitHub OAuth App (see setup below)
 
-## Kom i gang
+## Getting Started
 
-### 1. Klon og generer miljøvariabler
+### 1. Clone and generate environment variables
 
 ```bash
 git clone <repo-url>
 cd custom-mcp-meta
 
-# Ikke-interaktiv: genererer secrets, setter CHANGE_ME for resten
+# Non-interactive: generates secrets, sets CHANGE_ME for the rest
 just init-env
 
-# Interaktiv: spør om domene og GitHub-verdier
+# Interactive: prompts for domain and GitHub values
 just init-env -i
 ```
 
-### 2. Registrer GitHub OAuth-app
+### 2. Register a GitHub OAuth App
 
-Gå til **github.com → Settings → Developer settings → OAuth Apps → New OAuth App**:
+Go to **github.com → Settings → Developer settings → OAuth Apps → New OAuth App**:
 
-| Felt | Verdi |
-|------|-------|
-| Application name | `tiny-metamcp` (eller valgfritt) |
+| Field | Value |
+|-------|-------|
+| Application name | `tiny-metamcp` (or any name) |
 | Homepage URL | `https://<MCP_DOMAIN>` |
-| Callback URL | `https://<MCP_DOMAIN>/oauth2/callback` |
+| Authorization callback URL | `https://<MCP_DOMAIN>/oauth/callback` |
 
-Kopier **Client ID** og **Client secret** inn i `.env`.
+> Both the admin browser login and the MCP client OAuth flow share the same callback path. The app routes them internally based on a cookie set before the GitHub redirect.
+
+Copy the **Client ID** and **Client Secret** into `.env`.
 
 ### 3. Start
 
 ```bash
-just up     # bygger og starter i bakgrunnen
-just logs   # følg output
+just up     # build and start in the background
+just logs   # follow output
 ```
 
 ---
 
-## Lokal testing
+## Local Testing
 
-For lokal kjøring trenger oauth2-proxy en dedikert GitHub OAuth-app med `http://localhost:4180/oauth2/callback` som callback-URL, og `OAUTH2_PROXY_COOKIE_SECURE=false` i `.env` (siden ingen HTTPS lokalt).
+For local development, `docker-compose.override.yml` is merged automatically. It is in `.gitignore` and won't reach Coolify. The provided `docker-compose.override.yml` exposes port 8000 directly.
 
-Docker Compose merger automatisk `docker-compose.override.yml` med hoved-compose-filen. Opprett filen lokalt (den er i `.gitignore` og følger ikke med til Coolify):
-
-```yaml
-# docker-compose.override.yml
-services:
-  oauth2-proxy:
-    ports:
-      - "4180:4180"
-
-  mcp-aggregator:
-    ports:
-      - "8000:8000"
-```
-
-`.env`-tillegg for lokal kjøring:
-
-```bash
-# Separat GitHub OAuth-app for lokal test:
-GITHUB_CLIENT_ID=<lokal-test-app-id>
-GITHUB_CLIENT_SECRET=<lokal-test-app-secret>
-
-# Påkrevd uten HTTPS:
-OAUTH2_PROXY_COOKIE_SECURE=false
-```
-
-### Testsekvens
+For a local GitHub OAuth App, set the callback URL to `http://localhost:8000/admin/callback` (browser login) and `http://localhost:8000/oauth/callback` (MCP OAuth). Or register a second app for local use only.
 
 ```bash
 just up
 
-# 1. Tjenestestatus
+# 1. Service status
 just ps
 just health
 
-# 2. Auth-routing
-curl -sI http://localhost:4180/admin | grep -E "HTTP|ocation"  # → 302 til GitHub
-curl -sI http://localhost:4180/mcp   | grep HTTP               # → 200 (ikke redirect)
-
-# 3. MCP Bearer-token
+# 2. MCP bearer token access
 TOKEN=$(grep ^ADMIN_TOKEN .env | cut -d= -f2)
-curl -sI http://localhost:4180/mcp                                     # → 401
-curl -H "Authorization: Bearer $TOKEN" --max-time 2 http://localhost:4180/mcp  # → SSE stream
+curl -sI http://localhost:8000/mcp                                       # → 401
+curl -H "Authorization: Bearer $TOKEN" --max-time 2 http://localhost:8000/mcp  # → SSE stream
 
-# 4. REST API (direkte, bypasser oauth2-proxy)
-curl -sf http://localhost:8000/api/servers | python3 -m json.tool
+# 3. REST API
+curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/servers | python3 -m json.tool
 
-# Legg til en test-server
-curl -sf -X POST http://localhost:8000/api/servers \
-  -H "Content-Type: application/json" \
-  -d '{"name":"fetch","type":"npm","package":"@modelcontextprotocol/server-fetch","args":[],"env":{}}' \
-  | python3 -m json.tool
-
-curl -sf http://localhost:8000/api/tools | python3 -m json.tool
-
-# 5. Komplett MCP-protokolltest
+# 4. Full MCP protocol test
 npx @modelcontextprotocol/inspector
-# URL: http://localhost:4180/mcp  |  Header: Authorization: Bearer <ADMIN_TOKEN>
+# URL: http://localhost:8000/mcp  |  Header: Authorization: Bearer <ADMIN_TOKEN>
 ```
 
 ---
 
-## Coolify-deployment
+## Coolify Deployment
 
-1. Opprett nytt prosjekt i Coolify → **Add Resource → Docker Compose**
-2. Koble til GitHub-repoet
+1. Create a new project in Coolify → **Add Resource → Docker Compose**
+2. Connect to the GitHub repository
 3. **Compose file path:** `docker-compose.yml`
-4. Legg inn miljøvariabler (alle fra `.env` unntatt `OAUTH2_PROXY_COOKIE_SECURE`)
-5. Klikk **Deploy** — Coolify bygger `mcp-aggregator`-imaget og starter begge tjenestene
+4. Add environment variables from `.env`
+5. Click **Deploy** — Coolify builds the `mcp-aggregator` image and starts the service
 
-> **Merk:** Ikke inkluder `docker-compose.override.yml` i Coolify. Den er i `.gitignore` og vil ikke være tilgjengelig for Coolify.
+> Do not include `docker-compose.override.yml` in Coolify. It is in `.gitignore` and will not be available there.
 
 ---
 
-## Konfigurere MCP-klienter
+## Configuring MCP Clients
+
+**Claude Web UI** — no manual configuration needed. Add the connector URL `https://<MCP_DOMAIN>/mcp` and Claude will discover OAuth automatically and prompt for login.
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
@@ -169,278 +134,289 @@ npx @modelcontextprotocol/inspector
 
 ---
 
-## Administrasjon
+## Administration
 
 ### Web UI
 
-Gå til `https://<MCP_DOMAIN>/admin` — logger inn med GitHub. Her kan du:
+Go to `https://<MCP_DOMAIN>/admin` — sign in with GitHub. From here you can:
 
-- **MCP Servere** — legge til, aktivere/deaktivere, restarte og slette servere
-- **Logger** — se aggregator-logger og child-prosessers stderr i sanntid (Live SSE-stream)
-- **Test verktøy** — velg en kjørende server og et verktøy, fyll inn JSON-argumenter og kall det direkte
+- **MCP Servers** — add, enable/disable, restart, and delete servers
+- **Logs** — view aggregator logs and child process stderr in real time (live SSE stream)
+- **Tool Tester** — select a running server and tool, fill in JSON arguments, and call it directly
 
 ### REST API
 
+All API endpoints require authentication: either a valid admin session cookie (browser) or `Authorization: Bearer <ADMIN_TOKEN>`.
+
 ```bash
-BASE=http://localhost:8000   # eller https://<domene> via oauth2-proxy
+BASE=https://<MCP_DOMAIN>
+TOKEN=<ADMIN_TOKEN>
 
-# List servere
-curl $BASE/api/servers | jq
+# List servers
+curl -H "Authorization: Bearer $TOKEN" $BASE/api/servers | jq
 
-# Legg til server
+# Add a server
 curl -X POST $BASE/api/servers \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"<navn>","type":"pypi|npm|git|cmd","package":"<pakke>","args":[],"env":{}}'
+  -d '{"name":"<name>","type":"pypi|npm|git|cmd","package":"<package>","args":[],"env":{}}'
 
-# Aktiver / deaktiver
-curl -X POST $BASE/api/servers/<id>/enable
-curl -X POST $BASE/api/servers/<id>/disable
+# Enable / disable
+curl -X POST -H "Authorization: Bearer $TOKEN" $BASE/api/servers/<id>/enable
+curl -X POST -H "Authorization: Bearer $TOKEN" $BASE/api/servers/<id>/disable
 
 # Restart
-curl -X POST $BASE/api/servers/<id>/restart
+curl -X POST -H "Authorization: Bearer $TOKEN" $BASE/api/servers/<id>/restart
 
-# Slett
-curl -X DELETE $BASE/api/servers/<id>
+# Delete
+curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/api/servers/<id>
 
-# List alle tools (inkl. inputSchema)
-curl $BASE/api/tools | jq
+# List all tools (including inputSchema)
+curl -H "Authorization: Bearer $TOKEN" $BASE/api/tools | jq
 
-# Kall et verktøy
+# Call a tool
 curl -X POST $BASE/api/tools/call \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"server":"<servernavn>","tool":"<toolnavn>","arguments":{"key":"value"}}'
+  -d '{"server":"<server-name>","tool":"<tool-name>","arguments":{"key":"value"}}'
 
-# Logger (siste 200 oppføringer)
-curl "$BASE/api/logs" | jq
-curl "$BASE/api/logs?server=<servernavn>" | jq
+# Logs (last 200 entries)
+curl -H "Authorization: Bearer $TOKEN" "$BASE/api/logs" | jq
+curl -H "Authorization: Bearer $TOKEN" "$BASE/api/logs?server=<server-name>" | jq
 
-# Child-prosessens stderr
-curl "$BASE/api/logs/<servernavn>/stderr" | jq
+# Child process stderr
+curl -H "Authorization: Bearer $TOKEN" "$BASE/api/logs/<server-name>/stderr" | jq
 
-# SSE live-stream (blokkerer, bruk med curl --no-buffer)
-curl --no-buffer "$BASE/api/logs/stream"
-curl --no-buffer "$BASE/api/logs/stream?server=<servernavn>"
+# SSE live stream (blocking — use with curl --no-buffer)
+curl --no-buffer -H "Authorization: Bearer $TOKEN" "$BASE/api/logs/stream"
+curl --no-buffer -H "Authorization: Bearer $TOKEN" "$BASE/api/logs/stream?server=<server-name>"
 ```
 
 ---
 
-## Servertyper og konfigurasjon
+## Server Types and Configuration
 
-Tools fra child-servere namespaces som `<servernavn>__<toolnavn>` for å unngå konflikter.
+Tools from child servers are namespaced as `<server-name>__<tool-name>` to avoid conflicts.
 
-### `pypi` — Python-pakker via uvx
+### `pypi` — Python packages via uvx
 
-Brukes for Python MCP-servere. `uvx` isolerer pakken og håndterer dependencies automatisk.
+Used for Python MCP servers. `uvx` isolates the package and handles dependencies automatically.
 
-**Enkel PyPI-pakke:**
+**Simple PyPI package:**
 
-| Felt | Verdi |
-|------|-------|
-| Navn | `fetch` |
+| Field | Value |
+|-------|-------|
+| Name | `fetch` |
 | Type | `pypi` |
-| Pakke | `mcp-server-fetch` |
-| Args | – |
+| Package | `mcp-server-fetch` |
+| Args | — |
 
 ```bash
-curl -X POST $BASE/api/servers -H "Content-Type: application/json" \
+curl -X POST $BASE/api/servers \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"name":"fetch","type":"pypi","package":"mcp-server-fetch"}'
 ```
 
-**PyPI-pakke der konsollscript-navn avviker fra pakkenavn** (args[0] = entrypoint):
+**PyPI package where the console script name differs from the package name** (args[0] = entrypoint):
 
-| Felt | Verdi |
-|------|-------|
-| Pakke | `markitdown-mcp` |
+| Field | Value |
+|-------|-------|
+| Package | `markitdown-mcp` |
 | Args | `markitdown-mcp` |
 
-Kjører: `uvx --from markitdown-mcp markitdown-mcp`
+Runs: `uvx --from markitdown-mcp markitdown-mcp`
 
-**Git-URL (enkelt repo):**
+**Git URL (single repo):**
 
-| Felt | Verdi |
-|------|-------|
-| Pakke | `git+https://github.com/org/repo` |
-| Args | `entrypoint-navn` |
+| Field | Value |
+|-------|-------|
+| Package | `git+https://github.com/org/repo` |
+| Args | `entrypoint-name` |
 
-Kjører: `uvx --from git+https://github.com/org/repo entrypoint-navn`
+Runs: `uvx --from git+https://github.com/org/repo entrypoint-name`
 
-**Git-URL, monorepo med subpakke (`#subdirectory=`):**
+**Git URL, monorepo with subpackage (`#subdirectory=`):**
 
-| Felt | Verdi |
-|------|-------|
-| Pakke | `git+https://github.com/org/repo#subdirectory=packages/my-server` |
+| Field | Value |
+|-------|-------|
+| Package | `git+https://github.com/org/repo#subdirectory=packages/my-server` |
 | Args | `my-server` |
 
-Kjører: `uvx --from git+https://...#subdirectory=packages/my-server my-server`
+Runs: `uvx --from git+https://...#subdirectory=packages/my-server my-server`
 
-**Privat repo** — token i pakke-URL:
+**Private repo** — token in package URL:
 
-| Felt | Verdi |
-|------|-------|
-| Pakke | `git+https://<token>@github.com/org/repo#subdirectory=packages/my-server` |
+| Field | Value |
+|-------|-------|
+| Package | `git+https://<token>@github.com/org/repo#subdirectory=packages/my-server` |
 
-Eller som env-variabel:
+Or pass the token as an environment variable:
 
-```bash
--d '{
-  "name":"my-server","type":"pypi",
-  "package":"git+https://github.com/org/repo#subdirectory=packages/my-server",
-  "args":["my-server"],
-  "env":{"GIT_ASKPASS":"echo","GITHUB_TOKEN":"<token>"}
-}'
+```json
+{
+  "name": "my-server", "type": "pypi",
+  "package": "git+https://github.com/org/repo#subdirectory=packages/my-server",
+  "args": ["my-server"],
+  "env": {"GIT_ASKPASS": "echo", "GITHUB_TOKEN": "<token>"}
+}
 ```
 
 ---
 
-### `npm` — Node.js/TypeScript-pakker via npx
+### `npm` — Node.js/TypeScript packages via npx
 
-Brukes for Node.js og TypeScript MCP-servere. `npx --yes` laster ned og kjører pakken direkte.
+Used for Node.js and TypeScript MCP servers. `npx --yes` downloads and runs the package directly.
 
-**Publisert npm-pakke:**
+**Published npm package:**
 
-| Felt | Verdi |
-|------|-------|
-| Navn | `filesystem` |
+| Field | Value |
+|-------|-------|
+| Name | `filesystem` |
 | Type | `npm` |
-| Pakke | `@modelcontextprotocol/server-filesystem` |
-| Args | `/tillatt/mappe` |
+| Package | `@modelcontextprotocol/server-filesystem` |
+| Args | `/allowed/folder` |
 
 ```bash
-curl -X POST $BASE/api/servers -H "Content-Type: application/json" \
+curl -X POST $BASE/api/servers \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"name":"filesystem","type":"npm","package":"@modelcontextprotocol/server-filesystem","args":["/data"]}'
 ```
 
-**TypeScript-repo fra GitHub (ikke publisert til npm):**
+**TypeScript repo from GitHub (not published to npm):**
 
-| Felt | Verdi |
-|------|-------|
-| Pakke | `git+https://github.com/org/ts-mcp-server` |
-| Args | – |
+| Field | Value |
+|-------|-------|
+| Package | `git+https://github.com/org/ts-mcp-server` |
+| Args | — |
 
-Kjører: `npx --yes git+https://github.com/org/ts-mcp-server`
+Runs: `npx --yes git+https://github.com/org/ts-mcp-server`
 
-npm kloner repoet, kjører `npm install` og `prepare`-scriptet (TypeScript-kompilering), og starter binæren fra `bin`-feltet i `package.json`. Forutsetter at pakken har korrekt `prepare`-script og `bin`-oppføring.
+npm clones the repo, runs `npm install` and the `prepare` script (TypeScript compilation), and starts the binary from the `bin` field in `package.json`. Requires the package to have a correct `prepare` script and `bin` entry.
 
-**GitHub-kortform og andre npm-støttede URL-formater:**
+**GitHub shorthand and other npm-supported URL formats:**
 
 ```
-git+https://github.com/org/repo          # full HTTPS
-git+ssh://git@github.com/org/repo        # SSH
-github:org/repo                          # GitHub-kortform
+git+https://github.com/org/repo     # full HTTPS
+git+ssh://git@github.com/org/repo   # SSH
+github:org/repo                     # GitHub shorthand
 ```
 
-**Privat TypeScript-repo:**
+**Private TypeScript repo:**
 
-| Felt | Verdi |
-|------|-------|
-| Pakke | `git+https://<token>@github.com/org/ts-mcp-server` |
+| Field | Value |
+|-------|-------|
+| Package | `git+https://<token>@github.com/org/ts-mcp-server` |
 
 ---
 
-### `git` — klon og kjør lokalt
+### `git` — clone and run locally
 
-Kloner hele repoet til `/data/packages/<navn>` og kjører det derfra. Brukes primært for Python-repoer uten PyPI-publisering.
+Clones the entire repo to `/data/packages/<name>` and runs it from there. Primarily used for Python repos not published to PyPI.
 
-- **Python-repo** (`pyproject.toml` / `setup.py`): kjøres via `uvx --from <klon-mappe>`
-- **Node.js-repo** (`package.json`): kjøres via `node <main>` etter automatisk `npm install` og `npm run build`
+- **Python repo** (`pyproject.toml` / `setup.py`): run via `uvx --from <clone-dir>`
+- **Node.js repo** (`package.json`): run via `node <main>` after automatic `npm install` and `npm run build`
 
-| Felt | Verdi |
-|------|-------|
-| Navn | `my-server` |
+| Field | Value |
+|-------|-------|
+| Name | `my-server` |
 | Type | `git` |
-| Pakke | `https://github.com/org/repo` |
-| Args | evt. entrypoint (Python) |
+| Package | `https://github.com/org/repo` |
+| Args | optional entrypoint (Python) |
 
 ```bash
-curl -X POST $BASE/api/servers -H "Content-Type: application/json" \
+curl -X POST $BASE/api/servers \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"name":"my-server","type":"git","package":"https://github.com/org/repo"}'
 ```
 
-> **Merk:** For TypeScript-repoer fra GitHub er `npm`-modus med `git+https://`-URL enklere — npm cacher globalt og slipper lokal kloning.
+> For TypeScript repos from GitHub, `npm` mode with a `git+https://` URL is simpler — npm caches globally and avoids local cloning.
 
 ---
 
-### `cmd` — direkte kommando
+### `cmd` — direct command
 
-Kjører en vilkårlig kommando. Nyttig for lokalt installerte servere eller custom scripts.
+Runs an arbitrary command. Useful for locally installed servers or custom scripts.
 
-| Felt | Verdi |
-|------|-------|
-| Navn | `my-tool` |
+| Field | Value |
+|-------|-------|
+| Name | `my-tool` |
 | Type | `cmd` |
-| Pakke | `/usr/local/bin/my-mcp-server` |
+| Package | `/usr/local/bin/my-mcp-server` |
 | Args | `--config /data/config.json` |
 
-Pakke-feltet splittes på mellomrom og slås sammen med args: `/usr/local/bin/my-mcp-server --config /data/config.json`
+The package field is split on spaces and joined with args: `/usr/local/bin/my-mcp-server --config /data/config.json`
 
 ---
 
-### Oversikt
+### Overview
 
-| Type | Installasjon | Beste for |
-|------|-------------|-----------|
-| `pypi` | `uvx` (isolert) | Python MCP-servere fra PyPI eller git |
-| `npm` | `npx` (cachet) | Node.js/TS fra npm eller GitHub |
-| `git` | Klon → kjør lokalt | Upubliserte Python-repoer |
-| `cmd` | Ingen | Lokalt installerte binærer |
+| Type | How it runs | Best for |
+|------|-------------|----------|
+| `pypi` | `uvx` (isolated) | Python MCP servers from PyPI or git |
+| `npm` | `npx` (cached) | Node.js/TS from npm or GitHub |
+| `git` | clone → run locally | Unpublished Python repos |
+| `cmd` | none | Locally installed binaries |
 
 ---
 
-## Miljøvariabler
+## Environment Variables
 
-| Variabel | Påkrevd | Beskrivelse |
-|----------|---------|-------------|
-| `MCP_DOMAIN` | ✅ | Offentlig hostname (uten `https://`) |
-| `ADMIN_TOKEN` | ✅ | Bearer-token for MCP-klienter. Generer: `openssl rand -hex 32` |
-| `COOKIE_SECRET` | ✅ | Session-nøkkel for oauth2-proxy (24 bytes). Generer: `openssl rand -base64 24 \| tr -d '\n'` |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MCP_DOMAIN` | ✅ | Public hostname (without `https://`) |
+| `ADMIN_TOKEN` | — | Static bearer token for MCP clients. Generate: `openssl rand -hex 32` |
+| `SESSION_SECRET` | ✅ | Signing key for admin session cookies. Generate: `openssl rand -base64 32` |
 | `GITHUB_CLIENT_ID` | ✅ | GitHub OAuth App Client ID |
 | `GITHUB_CLIENT_SECRET` | ✅ | GitHub OAuth App Client Secret |
-| `GITHUB_ALLOWED_USERS` | ✅ | Kommaseparert liste med tillatte GitHub-brukernavn |
-| `OAUTH2_PROXY_EMAIL_DOMAINS` | ✅ | Sett til `*` (alle e-postdomener; GitHub-brukernavn styrer tilgang) |
-| `LOG_LEVEL` | – | `DEBUG` / `INFO` / `WARNING` / `ERROR` (standard: `INFO`) |
-| `OAUTH2_PROXY_COOKIE_SECURE` | – | Sett til `false` for lokal test uten HTTPS |
+| `GITHUB_ALLOWED_USERS` | ✅ | Comma-separated list of allowed GitHub usernames |
+| `LOG_LEVEL` | — | `DEBUG` / `INFO` / `WARNING` / `ERROR` (default: `INFO`) |
 
 ---
 
-## Prosjektstruktur
+## Project Structure
 
 ```
 .
-├── docker-compose.yml           Produksjonsoppsett (mcp-aggregator + oauth2-proxy)
-├── docker-compose.override.yml  Lokal override med porter (ikke i git)
-├── Justfile                     Kommandosnarveier
+├── docker-compose.yml           Production setup (mcp-aggregator + Traefik labels)
+├── docker-compose.override.yml  Local override with exposed ports (not in git)
+├── Justfile                     Command shortcuts
 ├── scripts/
-│   └── init-env.sh              Genererer .env med autogenererte secrets
-├── .env.example                 Mal for miljøvariabler
+│   └── init-env.sh              Generates .env with auto-generated secrets
+├── .env.example                 Environment variable template
 └── aggregator/
     ├── Dockerfile               Python 3.12 + uv + Node.js LTS + git
     ├── pyproject.toml
     └── src/mcp_aggregator/
-        ├── main.py              FastAPI-app, lifespan, ruter
-        ├── aggregator.py        MCP SSE-server + tool-aggregering
-        ├── child_manager.py     Prosess­livssyklus for child-servere
+        ├── main.py              FastAPI app, lifespan, routes
+        ├── aggregator.py        MCP SSE server + tool aggregation
+        ├── child_manager.py     Process lifecycle for child servers
         ├── installer.py         uvx / npx / git clone + npm build
-        ├── database.py          SQLite via aiosqlite
-        ├── config.py            Env-var innstillinger
-        ├── log_capture.py       In-memory loggbuffer + SSE pub-sub
-        ├── ui.py                HTMX + Alpine.js admin UI
-        └── api/routers.py       REST API
+        ├── database.py          SQLite via SQLModel + aiosqlite
+        ├── models.py            SQLModel ORM models
+        ├── admin_auth.py        GitHub OAuth browser login + signed session cookies
+        ├── oauth.py             OAuth 2.1 + PKCE authorization server
+        ├── config.py            Environment variable settings
+        ├── log_capture.py       In-memory log buffer + SSE pub-sub
+        ├── templates/           Jinja2 templates (pico.css + HTMX + Alpine.js)
+        └── api/
+            ├── routers.py       REST API
+            └── oauth_router.py  OAuth 2.1 endpoints
 ```
 
-## Just-kommandoer
+## Just Commands
 
 ```
-just init-env          Generer .env (secrets autogenerert, resten CHANGE_ME)
-just init-env -i       Interaktiv modus – spør om alle verdier
-just up                Bygg og start i bakgrunnen
-just dev               Start i forgrunnen med live logg
-just down              Stopp alle tjenester
-just down-volumes      Stopp og slett all data (ber om bekreftelse)
-just build             Bygg images uten å starte
-just restart           Restart alle tjenester
-just restart <navn>    Restart én tjeneste
-just logs              Følg alle logger
-just logs <navn>       Følg én tjeneste
-just ps                Vis containerstatus
-just health            Sjekk aggregator-helseendepunkt
+just init-env          Generate .env (secrets auto-generated, rest CHANGE_ME)
+just init-env -i       Interactive mode — prompts for all values
+just up                Build and start in the background
+just dev               Start in the foreground with live logs
+just down              Stop all services
+just down-volumes      Stop and delete all data (asks for confirmation)
+just build             Build images without starting
+just restart           Restart all services
+just restart <name>    Restart one service
+just logs              Follow all logs
+just logs <name>       Follow one service
+just ps                Show container status
+just health            Check aggregator health endpoint
 ```

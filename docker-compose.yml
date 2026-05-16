@@ -10,6 +10,7 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       DATA_DIR: "/data"
       ADMIN_TOKEN: "${ADMIN_TOKEN}"
+      SESSION_SECRET: "${SESSION_SECRET}"
       MCP_DOMAIN: "${MCP_DOMAIN}"
       GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID}"
       GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET}"
@@ -22,46 +23,14 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-
-  # GitHub OAuth-proxy (battle-tested, CGO-fri).
-  # – Beskytter /admin og /api via GitHub-innlogging i nettleseren.
-  # – Slipper /mcp og /messages gjennom uten OAuth (aggregatoren
-  #   sjekker Bearer ADMIN_TOKEN der i stedet).
-  # GitHub OAuth-app callback URL: https://<MCP_DOMAIN>/oauth2/callback
-  oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:latest
-    container_name: oauth2-proxy
-    restart: unless-stopped
-    environment:
-      OAUTH2_PROXY_PROVIDER: "github"
-      OAUTH2_PROXY_CLIENT_ID: "${GITHUB_CLIENT_ID}"
-      OAUTH2_PROXY_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET}"
-      # Generer med: openssl rand -base64 32   (må være 16, 24 eller 32 bytes)
-      OAUTH2_PROXY_COOKIE_SECRET: "${COOKIE_SECRET}"
-      # Kommaseparert liste med tillatte GitHub-brukernavn
-      OAUTH2_PROXY_GITHUB_USERS: "${GITHUB_ALLOWED_USERS}"
-      OAUTH2_PROXY_EMAIL_DOMAINS: "${OAUTH2_PROXY_EMAIL_DOMAINS:-*}"
-      OAUTH2_PROXY_UPSTREAMS: "http://mcp-aggregator:8000"
-      OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
-      OAUTH2_PROXY_REDIRECT_URL: "https://${MCP_DOMAIN}/oauth2/callback"
-      # MCP-endepunkter og OAuth-flyt bypasser oauth2-proxy
-      # (aggregatoren håndterer auth selv for disse rutene)
-      OAUTH2_PROXY_SKIP_AUTH_REGEX: "^/(mcp|messages|oauth(/.*)?|\\.well-known/oauth)"
-      OAUTH2_PROXY_COOKIE_SECURE: "true"
-      OAUTH2_PROXY_COOKIE_HTTPONLY: "true"
-      OAUTH2_PROXY_COOKIE_SAMESITE: "lax"
-      # Logg ikke cookie-verdier
-      OAUTH2_PROXY_SILENCE_PING_LOGGING: "true"
-    depends_on:
-      mcp-aggregator:
-        condition: service_healthy
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.mcp.rule=Host(`${MCP_DOMAIN}`)"
       - "traefik.http.routers.mcp.entrypoints=https"
       - "traefik.http.routers.mcp.tls=true"
       - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
-      - "traefik.http.services.mcp.loadbalancer.server.port=4180"
+      - "traefik.http.services.mcp.loadbalancer.server.port=8000"
+      # Disable response buffering so SSE streams are delivered immediately
       - "traefik.http.middlewares.mcp-sse.headers.customResponseHeaders.X-Accel-Buffering=no"
       - "traefik.http.routers.mcp.middlewares=mcp-sse"
 

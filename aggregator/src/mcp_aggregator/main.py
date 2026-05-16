@@ -1,21 +1,43 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 
-from . import log_capture, oauth
+from . import admin_auth, log_capture, oauth
 from .aggregator import mcp_server, sse_transport
 from .api.oauth_router import router as oauth_router
 from .api.routers import router as api_router
 from .child_manager import child_manager
-from .config import ADMIN_TOKEN, LOG_LEVEL, MCP_DOMAIN
-from .database import ServerType, add_server, init_db, list_servers, update_server_enabled
-from .ui import ADMIN_HTML, add_result_html, servers_table_html
+from .config import ADMIN_TOKEN, LOG_LEVEL
+from .database import (
+    add_server,
+    delete_server,
+    get_server,
+    init_db,
+    list_servers,
+    update_server_enabled,
+)
+from .installer import uninstall
+from .models import ServerType
 
 logging.basicConfig(level=LOG_LEVEL)
 log_capture.setup()
 logger = logging.getLogger(__name__)
+
+templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+async def _token_cleanup_loop() -> None:
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            await oauth.cleanup_expired()
+        except Exception as exc:
+            logger.warning("Token cleanup error: %s", exc)
 
 
 @asynccontextmanager
@@ -28,23 +50,25 @@ async def lifespan(app: FastAPI):
                 await child_manager.add(srv)
             except Exception as exc:
                 logger.error("Could not start %s on boot: %s", srv.name, exc)
+    cleanup_task = asyncio.create_task(_token_cleanup_loop())
     yield
+    cleanup_task.cancel()
     for name in list(child_manager._children):
         await child_manager.remove(name)
 
 
 app = FastAPI(title="MCP Aggregator", lifespan=lifespan, docs_url=None, redoc_url=None)
-app.include_router(oauth_router)          # /.well-known/* and /oauth/* at root
+app.include_router(oauth_router)
 app.include_router(api_router, prefix="/api")
 
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
+# ── Bearer auth for MCP endpoints ────────────────────────────────────────────
 
 async def _check_bearer(request: Request) -> None:
     """
-    Bearer-token check for MCP endpoints (oauth2-proxy skips these).
-    Accepts ADMIN_TOKEN (static) or a valid OAuth access token.
-    On failure returns 401 with WWW-Authenticate so Claude can discover OAuth.
+    Bearer auth for /mcp and /messages.
+    Accepts static ADMIN_TOKEN or a valid OAuth access token.
+    Returns 401 + WWW-Authenticate so MCP clients can discover OAuth.
     """
     auth = request.headers.get("authorization", "")
     if auth.startswith("Bearer "):
@@ -75,43 +99,80 @@ async def mcp_messages(request: Request, _: None = Depends(_check_bearer)):
     await sse_transport.handle_post_message(request.scope, request.receive, request._send)
 
 
-# ── Health (ingen auth – brukes av Docker healthcheck) ───────────────────────
+# ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "servers": child_manager.status()}
 
 
-# ── Admin UI (HTMX) – beskyttet av oauth2-proxy oppstrøms ────────────────────
+# ── Admin auth routes (no session required) ───────────────────────────────────
+
+@app.get("/admin/login", response_class=HTMLResponse)
+async def admin_login(request: Request, error: str = ""):
+    return templates.TemplateResponse(
+        "admin/login.html", {"request": request, "error": error}
+    )
+
+
+@app.get("/admin/login/github")
+async def admin_login_github():
+    return admin_auth.login_redirect()
+
+
+
+@app.get("/admin/logout")
+async def admin_logout():
+    response = RedirectResponse("/admin/login", status_code=302)
+    response.delete_cookie("admin_session")
+    return response
+
+
+# ── Admin UI (session required) ───────────────────────────────────────────────
 
 @app.get("/admin", response_class=HTMLResponse)
-async def admin_root():
-    return ADMIN_HTML
+async def admin_root(request: Request, user: str = Depends(admin_auth.require_admin)):
+    return templates.TemplateResponse("admin/index.html", {"request": request, "user": user})
+
+
+async def _render_servers_table(request: Request) -> HTMLResponse:
+    servers = await list_servers()
+    running_map = {s["name"]: s for s in child_manager.status()}
+    enriched = []
+    for s in servers:
+        st = running_map.get(s.name, {})
+        enriched.append({
+            "id": s.id,
+            "name": s.name,
+            "type": s.type,
+            "package": s.package,
+            "enabled": s.enabled,
+            "running": st.get("running", False),
+            "tool_count": st.get("tool_count", 0),
+            "error": st.get("error"),
+        })
+    return templates.TemplateResponse(
+        "admin/_servers_table.html", {"request": request, "servers": enriched}
+    )
 
 
 @app.get("/admin/servers-table", response_class=HTMLResponse)
-async def admin_servers_table():
-    servers = await list_servers()
-    running_map = {s["name"]: s for s in child_manager.status()}
-    enriched = [
-        {
-            **{"id": s.id, "name": s.name, "type": s.type, "package": s.package,
-               "enabled": s.enabled},
-            **running_map.get(s.name, {"running": False, "tool_count": 0, "error": None}),
-        }
-        for s in servers
-    ]
-    return servers_table_html(enriched)
+async def admin_servers_table(
+    request: Request, _: str = Depends(admin_auth.require_admin)
+):
+    return await _render_servers_table(request)
 
 
 @app.post("/admin/add-server", response_class=HTMLResponse)
-async def admin_add_server(request: Request):
+async def admin_add_server(
+    request: Request, _: str = Depends(admin_auth.require_admin)
+):
     form = await request.form()
-    name = form.get("name", "").strip()
-    type_ = form.get("type", "pypi")
-    package = form.get("package", "").strip()
-    raw_args = form.get("args", "").strip()
-    raw_env = form.get("env", "").strip()
+    name = str(form.get("name", "")).strip()
+    type_ = str(form.get("type", "pypi"))
+    package = str(form.get("package", "")).strip()
+    raw_args = str(form.get("args", "")).strip()
+    raw_env = str(form.get("env", "")).strip()
 
     args = [a.strip() for a in raw_args.split(",") if a.strip()] if raw_args else []
     env: dict[str, str] = {}
@@ -123,56 +184,75 @@ async def admin_add_server(request: Request):
     try:
         config = await add_server(name, ServerType(type_), package, args, env)
     except Exception as exc:
-        return add_result_html({}, [], str(exc))
+        return templates.TemplateResponse(
+            "admin/_add_result.html",
+            {"request": request, "name": name, "tools": [], "error": str(exc)},
+        )
 
     try:
         state = await child_manager.add(config)
-        return add_result_html({"name": config.name}, [t.name for t in state.tools], None)
+        tool_names = [t.name for t in state.tools]
+        error = None
     except Exception as exc:
-        return add_result_html({"name": config.name}, [], str(exc))
+        tool_names = []
+        error = str(exc)
+
+    return templates.TemplateResponse(
+        "admin/_add_result.html",
+        {"request": request, "name": config.name, "tools": tool_names, "error": error},
+    )
 
 
 @app.post("/admin/servers/{server_id}/enable", response_class=HTMLResponse)
-async def admin_enable(server_id: int):
-    from .database import get_server
+async def admin_enable(
+    server_id: int, request: Request, _: str = Depends(admin_auth.require_admin)
+):
     config = await get_server(server_id)
     if not config:
         raise HTTPException(404)
     await update_server_enabled(server_id, True)
     config.enabled = True
-    await child_manager.add(config)
-    return ""
+    try:
+        await child_manager.add(config)
+    except Exception as exc:
+        logger.warning("Enable %s failed: %s", config.name, exc)
+    return await _render_servers_table(request)
 
 
 @app.post("/admin/servers/{server_id}/disable", response_class=HTMLResponse)
-async def admin_disable(server_id: int):
-    from .database import get_server
+async def admin_disable(
+    server_id: int, request: Request, _: str = Depends(admin_auth.require_admin)
+):
     config = await get_server(server_id)
     if not config:
         raise HTTPException(404)
     await child_manager.remove(config.name)
     await update_server_enabled(server_id, False)
-    return ""
+    return await _render_servers_table(request)
 
 
 @app.post("/admin/servers/{server_id}/restart", response_class=HTMLResponse)
-async def admin_restart(server_id: int):
-    from .database import get_server
+async def admin_restart(
+    server_id: int, request: Request, _: str = Depends(admin_auth.require_admin)
+):
     config = await get_server(server_id)
     if not config:
         raise HTTPException(404)
-    await child_manager.restart(config.name)
-    return ""
+    try:
+        await child_manager.restart(config.name)
+    except KeyError:
+        raise HTTPException(404, "Server not running")
+    return await _render_servers_table(request)
 
 
 @app.delete("/admin/servers/{server_id}", response_class=HTMLResponse)
-async def admin_delete(server_id: int):
-    from .database import get_server, delete_server
-    from .installer import uninstall
+async def admin_delete(
+    server_id: int, request: Request, _: str = Depends(admin_auth.require_admin)
+):
     config = await get_server(server_id)
     if not config:
         raise HTTPException(404)
     await child_manager.remove(config.name)
     await uninstall(config)
     await delete_server(server_id)
-    return ""
+    return await _render_servers_table(request)

@@ -1,0 +1,8 @@
+{% if error %}
+<p style="color:var(--pico-del-color)"><strong>Error:</strong> {{ error }}</p>
+{% else %}
+<p style="color:var(--pico-ins-color)">
+  <strong>{{ name }}</strong> added successfully
+  {% if tools %}— {{ tools | length }} tool(s): {{ tools | join(', ') }}{% endif %}
+</p>
+{% endif %}

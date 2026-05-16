@@ -3,13 +3,13 @@ OAuth 2.1 + PKCE authorization server backed by GitHub OAuth.
 
 Flow for Claude Web UI connectors:
   1. /mcp returns 401 + WWW-Authenticate pointing at /.well-known/oauth-protected-resource
-  2. Claude fetches discovery documents
-  3. Claude sends user to /oauth/authorize (PKCE + CIMD client_id)
+  2. Claude fetches discovery documents (/.well-known/oauth-authorization-server)
+  3. Claude sends user to /authorize (PKCE + CIMD client_id)
   4. We redirect user to GitHub
   5. GitHub redirects to /oauth/callback
   6. We exchange GitHub code, validate user, issue auth code
   7. We redirect to client redirect_uri with auth code
-  8. Claude POSTs to /oauth/token with code + code_verifier
+  8. Claude POSTs to /token with code + code_verifier
   9. We verify PKCE, issue access_token + refresh_token
 """
 
@@ -76,19 +76,40 @@ def verify_pkce(code_verifier: str, code_challenge: str) -> bool:
     return secrets.compare_digest(computed, code_challenge)
 
 
-# ── Client validation (CIMD + hardcoded fallback) ────────────────────────────
+# ── Client validation (DCR registry + CIMD + hardcoded fallback) ─────────────
 
-# Known clients when CIMD fetch is unavailable
+# Hardcoded fallback when CIMD fetch is unavailable
 _KNOWN_CLIENTS: dict[str, list[str]] = {
     "https://claude.ai": ["https://claude.ai/api/mcp/auth_callback"],
     "https://www.claude.ai": ["https://claude.ai/api/mcp/auth_callback"],
 }
 
+# Dynamically registered clients (RFC7591); lost on restart, clients re-register
+_registered_clients: dict[str, list[str]] = {}
+
+
+def register_client(client_id: str, redirect_uris: list[str]) -> dict:
+    """Register a dynamic client (RFC7591). Returns the registration record."""
+    if not client_id:
+        client_id = f"https://{MCP_DOMAIN}/clients/{secrets.token_urlsafe(16)}"
+    _registered_clients[client_id] = redirect_uris
+    logger.info("DCR: registered client %s with %d redirect URIs", client_id, len(redirect_uris))
+    return {
+        "client_id": client_id,
+        "redirect_uris": redirect_uris,
+        "client_id_issued_at": int(time.time()),
+        "token_endpoint_auth_method": "none",
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+    }
+
 
 async def validate_client(client_id: str, redirect_uri: str) -> bool:
-    """Validate client via CIMD metadata fetch, with hardcoded fallback."""
+    """Validate client: DCR registry → CIMD fetch → hardcoded fallback."""
     if not client_id.startswith("https://"):
         return False
+    if client_id in _registered_clients:
+        return redirect_uri in _registered_clients[client_id]
     try:
         meta_url = client_id.rstrip("/") + "/.well-known/oauth-client"
         async with httpx.AsyncClient(timeout=5.0) as h:
@@ -268,8 +289,9 @@ def authorization_server_metadata() -> dict:
     base = f"https://{MCP_DOMAIN}"
     return {
         "issuer": base,
-        "authorization_endpoint": f"{base}/oauth/authorize",
-        "token_endpoint": f"{base}/oauth/token",
+        "authorization_endpoint": f"{base}/authorize",
+        "token_endpoint": f"{base}/token",
+        "registration_endpoint": f"{base}/register",
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "response_types_supported": ["code"],
         "code_challenge_methods_supported": ["S256"],

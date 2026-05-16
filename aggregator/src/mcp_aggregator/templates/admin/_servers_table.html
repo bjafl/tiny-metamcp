@@ -1,0 +1,67 @@
+{% if servers %}
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Type</th>
+      <th>Package</th>
+      <th>Status</th>
+      <th>Tools</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in servers %}
+    <tr>
+      <td><strong>{{ s.name }}</strong></td>
+      <td><code>{{ s.type }}</code></td>
+      <td><small style="word-break:break-all">{{ s.package }}</small></td>
+      <td>
+        {% if not s.enabled %}
+          <span class="badge badge-gray">Disabled</span>
+        {% elif s.error %}
+          <span class="badge badge-red" title="{{ s.error }}">Error</span>
+        {% elif s.running %}
+          <span class="badge badge-green">Running</span>
+        {% else %}
+          <span class="badge badge-gray">Stopped</span>
+        {% endif %}
+      </td>
+      <td>{{ s.tool_count if s.running else '—' }}</td>
+      <td class="actions">
+        {% if s.enabled %}
+        <button hx-post="/admin/servers/{{ s.id }}/disable"
+                hx-target="#servers-table"
+                hx-swap="innerHTML"
+                class="outline secondary">Disable</button>
+        {% else %}
+        <button hx-post="/admin/servers/{{ s.id }}/enable"
+                hx-target="#servers-table"
+                hx-swap="innerHTML"
+                class="outline">Enable</button>
+        {% endif %}
+        <button hx-post="/admin/servers/{{ s.id }}/restart"
+                hx-target="#servers-table"
+                hx-swap="innerHTML"
+                {% if not s.running %}disabled{% endif %}
+                class="outline secondary">Restart</button>
+        <button hx-delete="/admin/servers/{{ s.id }}"
+                hx-target="#servers-table"
+                hx-swap="innerHTML"
+                hx-confirm="Delete '{{ s.name }}'? This cannot be undone."
+                class="outline contrast">Delete</button>
+      </td>
+    </tr>
+    {% if s.error %}
+    <tr>
+      <td colspan="6"><small style="color:var(--pico-del-color)">{{ s.error }}</small></td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="text-align:center;color:var(--pico-muted-color)">
+  No servers configured yet. Use the form above to add one.
+</p>
+{% endif %}

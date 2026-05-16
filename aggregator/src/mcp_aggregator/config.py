@@ -11,6 +11,7 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 PORT = int(os.getenv("PORT", "8000"))
 
 MCP_DOMAIN = os.getenv("MCP_DOMAIN", "localhost")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "change-me-in-production")
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 GITHUB_ALLOWED_USERS: set[str] = {

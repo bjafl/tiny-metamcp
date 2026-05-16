@@ -1,13 +1,13 @@
 import json as _json
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import log_capture
+from ..admin_auth import require_api_auth
 from ..child_manager import child_manager
+from ..models import Server, ServerType
 from ..database import (
-    ServerConfig,
-    ServerType,
     add_server,
     delete_server,
     get_server,
@@ -16,7 +16,7 @@ from ..database import (
 )
 from ..installer import uninstall
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_auth)])
 
 
 # ── Server management ────────────────────────────────────────────────────────
@@ -181,13 +181,13 @@ async def api_get_stderr(server_name: str, limit: int = 200):
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _cfg(c: ServerConfig) -> dict:
+def _cfg(c: Server) -> dict:
     return {
         "id": c.id,
         "name": c.name,
         "type": c.type,
         "package": c.package,
-        "args": c.args,
-        "env": c.env,
+        "args": c.get_args(),
+        "env": c.get_env(),
         "enabled": c.enabled,
     }

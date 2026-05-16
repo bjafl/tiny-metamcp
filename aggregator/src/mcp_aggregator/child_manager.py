@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import subprocess
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Optional
@@ -9,7 +8,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import Tool
 
-from .database import ServerConfig
+from .models import Server
 from .installer import build_command, install
 from . import log_capture
 
@@ -23,7 +22,7 @@ def _child_logger(name: str) -> logging.LoggerAdapter:
 
 @dataclass
 class ChildState:
-    config: ServerConfig
+    config: Server
     session: Optional[ClientSession] = None
     tools: list[Tool] = field(default_factory=list)
     error: Optional[str] = None
@@ -46,14 +45,14 @@ class ChildState:
         params = StdioServerParameters(
             command=cmd[0],
             args=cmd[1:],
-            env=self.config.env or None,
+            env=self.config.get_env() or None,
         )
         # Redirect child stderr to log file (supported by MCP SDK ≥ 1.6)
         try:
             params = StdioServerParameters(
                 command=cmd[0],
                 args=cmd[1:],
-                env=self.config.env or None,
+                env=self.config.get_env() or None,
                 stderr=self._log_fh,
             )
         except TypeError:
@@ -105,7 +104,7 @@ class ChildManager:
     def __init__(self) -> None:
         self._children: dict[str, ChildState] = {}
 
-    async def add(self, config: ServerConfig) -> ChildState:
+    async def add(self, config: Server) -> ChildState:
         if config.name in self._children:
             await self.remove(config.name)
         state = ChildState(config=config)

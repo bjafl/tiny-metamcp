@@ -1,11 +1,12 @@
 """OAuth 2.1 endpoints — included at root (no prefix)."""
 
+import html
 import urllib.parse
 
-from fastapi import APIRouter, Form, Query
+from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from .. import oauth
+from .. import admin_auth, oauth
 from ..config import GITHUB_CLIENT_ID, MCP_DOMAIN
 
 router = APIRouter()
@@ -23,27 +24,49 @@ async def oauth_authorization_server():
     return oauth.authorization_server_metadata()
 
 
+# ── Dynamic Client Registration (RFC7591) ─────────────────────────────────────
+
+@router.post("/register")
+async def oauth_register(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid_request"}, status_code=400)
+
+    redirect_uris = body.get("redirect_uris")
+    if not redirect_uris or not isinstance(redirect_uris, list):
+        return JSONResponse(
+            {"error": "invalid_redirect_uri", "error_description": "redirect_uris required"},
+            status_code=400,
+        )
+
+    client_id = body.get("client_id", "")
+    registration = oauth.register_client(client_id, redirect_uris)
+    return JSONResponse(registration, status_code=201)
+
+
 # ── Authorization request ─────────────────────────────────────────────────────
 
-@router.get("/oauth/authorize")
-async def oauth_authorize(
-    response_type: str = Query(...),
-    client_id: str = Query(...),
-    redirect_uri: str = Query(...),
-    state: str = Query(...),
-    code_challenge: str = Query(...),
-    code_challenge_method: str = Query(...),
-    scope: str = Query(default="mcp"),
+async def _authorize_handler(
+    response_type: str,
+    client_id: str,
+    redirect_uri: str,
+    state: str,
+    code_challenge: str,
+    code_challenge_method: str,
+    scope: str,
 ):
     if response_type != "code":
         return JSONResponse({"error": "unsupported_response_type"}, status_code=400)
     if code_challenge_method != "S256":
-        return JSONResponse({"error": "invalid_request", "error_description": "Only S256 supported"}, status_code=400)
+        return JSONResponse(
+            {"error": "invalid_request", "error_description": "Only S256 supported"},
+            status_code=400,
+        )
     if not await oauth.validate_client(client_id, redirect_uri):
         return JSONResponse({"error": "invalid_client"}, status_code=400)
 
     github_state = oauth.start_session(client_id, redirect_uri, code_challenge, state)
-
     params = urllib.parse.urlencode({
         "client_id": GITHUB_CLIENT_ID,
         "redirect_uri": f"https://{MCP_DOMAIN}/oauth/callback",
@@ -55,26 +78,64 @@ async def oauth_authorize(
     )
 
 
-# ── GitHub callback ───────────────────────────────────────────────────────────
+@router.get("/authorize")
+async def oauth_authorize(
+    response_type: str = Query(...),
+    client_id: str = Query(...),
+    redirect_uri: str = Query(...),
+    state: str = Query(...),
+    code_challenge: str = Query(...),
+    code_challenge_method: str = Query(...),
+    scope: str = Query(default="mcp"),
+):
+    return await _authorize_handler(
+        response_type, client_id, redirect_uri, state,
+        code_challenge, code_challenge_method, scope,
+    )
+
+
+# Alias kept for clients that cached old discovery documents
+@router.get("/oauth/authorize")
+async def oauth_authorize_alias(
+    response_type: str = Query(...),
+    client_id: str = Query(...),
+    redirect_uri: str = Query(...),
+    state: str = Query(...),
+    code_challenge: str = Query(...),
+    code_challenge_method: str = Query(...),
+    scope: str = Query(default="mcp"),
+):
+    return await _authorize_handler(
+        response_type, client_id, redirect_uri, state,
+        code_challenge, code_challenge_method, scope,
+    )
+
+
+# ── Shared GitHub callback ────────────────────────────────────────────────────
+# Both the admin browser flow and the MCP OAuth flow redirect here.
+# The admin flow sets an `admin_oauth_state` cookie before going to GitHub,
+# which serves as the discriminator.
 
 @router.get("/oauth/callback")
 async def oauth_callback(
+    request: Request,
     code: str = Query(None),
     state: str = Query(None),
     error: str = Query(None),
     error_description: str = Query(None),
 ):
+    if request.cookies.get("admin_oauth_state"):
+        return await admin_auth.handle_callback(request)
+
     if error or not code or not state:
-        msg = error_description or error or "missing_code"
-        return HTMLResponse(
-            f"<h1>OAuth-feil</h1><p>{msg}</p>", status_code=400
-        )
+        msg = html.escape(error_description or error or "missing_code")
+        return HTMLResponse(f"<h1>OAuth error</h1><p>{msg}</p>", status_code=400)
 
     result = await oauth.finish_session(code, state)
     if not result:
         return HTMLResponse(
-            "<h1>Tilgang nektet</h1>"
-            "<p>Autentisering feilet eller brukeren er ikke autorisert.</p>",
+            "<h1>Access denied</h1>"
+            "<p>Authentication failed or user is not authorized.</p>",
             status_code=403,
         )
 
@@ -85,14 +146,13 @@ async def oauth_callback(
 
 # ── Token endpoint ────────────────────────────────────────────────────────────
 
-@router.post("/oauth/token")
-async def oauth_token(
-    grant_type: str = Form(...),
-    code: str = Form(None),
-    code_verifier: str = Form(None),
-    client_id: str = Form(None),
-    redirect_uri: str = Form(None),
-    refresh_token: str = Form(None),
+async def _token_handler(
+    grant_type: str,
+    code: str | None,
+    code_verifier: str | None,
+    client_id: str | None,
+    redirect_uri: str | None,
+    refresh_token: str | None,
 ):
     if grant_type == "authorization_code":
         if not all([code, code_verifier, client_id, redirect_uri]):
@@ -125,3 +185,32 @@ async def oauth_token(
         }
 
     return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
+
+
+@router.post("/token")
+async def oauth_token(
+    grant_type: str = Form(...),
+    code: str = Form(None),
+    code_verifier: str = Form(None),
+    client_id: str = Form(None),
+    redirect_uri: str = Form(None),
+    refresh_token: str = Form(None),
+):
+    return await _token_handler(
+        grant_type, code, code_verifier, client_id, redirect_uri, refresh_token
+    )
+
+
+# Alias kept for clients that cached old discovery documents
+@router.post("/oauth/token")
+async def oauth_token_alias(
+    grant_type: str = Form(...),
+    code: str = Form(None),
+    code_verifier: str = Form(None),
+    client_id: str = Form(None),
+    redirect_uri: str = Form(None),
+    refresh_token: str = Form(None),
+):
+    return await _token_handler(
+        grant_type, code, code_verifier, client_id, redirect_uri, refresh_token
+    )

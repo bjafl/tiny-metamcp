@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Sign In — MCP Aggregator{% endblock %}
+{% block content %}
+<article style="max-width:440px;margin:5rem auto;text-align:center">
+  <header>
+    <h2>MCP Aggregator</h2>
+    <p>Sign in with GitHub to access the admin interface.</p>
+  </header>
+  {% if error %}
+  <p role="alert" style="color:var(--pico-del-color)">{{ error }}</p>
+  {% endif %}
+  <a href="/admin/login/github" role="button">Login with GitHub</a>
+</article>
+{% endblock %}

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MCP Aggregator{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  {% block head %}{% endblock %}
+  <style>
+    body { padding: 0 1rem; }
+    header { border-bottom: 1px solid var(--pico-muted-border-color); margin-bottom: 1.5rem; }
+    header nav { padding: 0.75rem 0; }
+    .badge { display: inline-block; padding: 0.15em 0.5em; border-radius: 9999px; font-size: 0.75em; font-weight: 600; }
+    .badge-green { background: #d1fae5; color: #065f46; }
+    .badge-red   { background: #fee2e2; color: #991b1b; }
+    .badge-gray  { background: #f3f4f6; color: #6b7280; }
+    .log-box { background: #1e1e2e; color: #cdd6f4; border-radius: 0.5rem; padding: 0.75rem 1rem; height: 380px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; }
+    .log-line { display: flex; gap: 0.5rem; margin-bottom: 0.15rem; }
+    .log-ts  { color: #6c7086; min-width: 8ch; }
+    .log-lvl { min-width: 7ch; font-weight: 600; }
+    .log-srv { color: #89b4fa; min-width: 10ch; }
+    .log-msg { color: #cdd6f4; word-break: break-all; }
+    .lvl-DEBUG   { color: #6c7086; }
+    .lvl-INFO    { color: #a6e3a1; }
+    .lvl-WARNING { color: #f9e2af; }
+    .lvl-ERROR   { color: #f38ba8; }
+    .schema-box, .result-box { background: #f6f8fa; border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem; padding: 0.6rem; font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+    .result-box.error { background: #fff5f5; border-color: #feb2b2; }
+    .tab-list { display: flex; gap: 0; border-bottom: 2px solid var(--pico-muted-border-color); margin-bottom: 1.5rem; }
+    .tab-btn { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 0.6rem 1.25rem; cursor: pointer; font-size: 0.95rem; color: var(--pico-muted-color); }
+    .tab-btn.active { border-bottom-color: var(--pico-primary); color: var(--pico-primary); font-weight: 600; }
+    table { width: 100%; }
+    td, th { vertical-align: middle; }
+    .actions { white-space: nowrap; }
+    .actions button { margin: 0 0.15rem; padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+    .htmx-indicator { opacity: 0; transition: opacity 200ms; }
+    .htmx-request .htmx-indicator { opacity: 1; }
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <ul>
+        <li><a href="/admin"><strong>MCP Aggregator</strong></a></li>
+      </ul>
+      {% if user is defined and user %}
+      <ul>
+        <li><small>{{ user }}</small></li>
+        <li><a href="/admin/logout" role="button" class="secondary outline">Logout</a></li>
+      </ul>
+      {% endif %}
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
