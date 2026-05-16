@@ -110,9 +110,7 @@ async def health():
 
 @app.get("/admin/login", response_class=HTMLResponse)
 async def admin_login(request: Request, error: str = ""):
-    return templates.TemplateResponse(
-        "admin/login.html", {"request": request, "error": error}
-    )
+    return templates.TemplateResponse(request, "admin/login.html", {"error": error})
 
 
 @app.get("/admin/login/github")
@@ -132,7 +130,7 @@ async def admin_logout():
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_root(request: Request, user: str = Depends(admin_auth.require_admin)):
-    return templates.TemplateResponse("admin/index.html", {"request": request, "user": user})
+    return templates.TemplateResponse(request, "admin/index.html", {"user": user})
 
 
 async def _render_servers_table(request: Request) -> HTMLResponse:
@@ -151,9 +149,7 @@ async def _render_servers_table(request: Request) -> HTMLResponse:
             "tool_count": st.get("tool_count", 0),
             "error": st.get("error"),
         })
-    return templates.TemplateResponse(
-        "admin/_servers_table.html", {"request": request, "servers": enriched}
-    )
+    return templates.TemplateResponse(request, "admin/_servers_table.html", {"servers": enriched})
 
 
 @app.get("/admin/servers-table", response_class=HTMLResponse)
@@ -185,8 +181,8 @@ async def admin_add_server(
         config = await add_server(name, ServerType(type_), package, args, env)
     except Exception as exc:
         return templates.TemplateResponse(
-            "admin/_add_result.html",
-            {"request": request, "name": name, "tools": [], "error": str(exc)},
+            request, "admin/_add_result.html",
+            {"name": name, "tools": [], "error": str(exc)},
         )
 
     try:
@@ -198,8 +194,8 @@ async def admin_add_server(
         error = str(exc)
 
     return templates.TemplateResponse(
-        "admin/_add_result.html",
-        {"request": request, "name": config.name, "tools": tool_names, "error": error},
+        request, "admin/_add_result.html",
+        {"name": config.name, "tools": tool_names, "error": error},
     )
 
 
