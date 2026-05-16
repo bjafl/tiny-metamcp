@@ -51,6 +51,16 @@ async def init_db() -> None:
                 enabled INTEGER NOT NULL DEFAULT 1
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS oauth_tokens (
+                token       TEXT PRIMARY KEY,
+                token_type  TEXT NOT NULL,
+                github_user TEXT NOT NULL,
+                client_id   TEXT NOT NULL,
+                expires_at  REAL NOT NULL,
+                created_at  REAL NOT NULL DEFAULT (unixepoch())
+            )
+        """)
         await db.commit()
 
 

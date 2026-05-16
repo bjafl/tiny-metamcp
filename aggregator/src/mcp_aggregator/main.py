@@ -4,11 +4,12 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from . import log_capture
+from . import log_capture, oauth
 from .aggregator import mcp_server, sse_transport
+from .api.oauth_router import router as oauth_router
 from .api.routers import router as api_router
 from .child_manager import child_manager
-from .config import ADMIN_TOKEN, LOG_LEVEL
+from .config import ADMIN_TOKEN, LOG_LEVEL, MCP_DOMAIN
 from .database import ServerType, add_server, init_db, list_servers, update_server_enabled
 from .ui import ADMIN_HTML, add_result_html, servers_table_html
 
@@ -33,18 +34,30 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="MCP Aggregator", lifespan=lifespan, docs_url=None, redoc_url=None)
+app.include_router(oauth_router)          # /.well-known/* and /oauth/* at root
 app.include_router(api_router, prefix="/api")
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
-def _check_bearer(request: Request) -> None:
-    """Bearer-token check for MCP endpoints (oauth2-proxy skips these)."""
-    if not ADMIN_TOKEN:
-        return
+async def _check_bearer(request: Request) -> None:
+    """
+    Bearer-token check for MCP endpoints (oauth2-proxy skips these).
+    Accepts ADMIN_TOKEN (static) or a valid OAuth access token.
+    On failure returns 401 with WWW-Authenticate so Claude can discover OAuth.
+    """
     auth = request.headers.get("authorization", "")
-    if not auth.startswith("Bearer ") or auth[7:] != ADMIN_TOKEN:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    if auth.startswith("Bearer "):
+        token = auth[7:]
+        if ADMIN_TOKEN and token == ADMIN_TOKEN:
+            return
+        if await oauth.validate_bearer(token):
+            return
+    raise HTTPException(
+        status_code=401,
+        detail="Unauthorized",
+        headers={"WWW-Authenticate": oauth.www_authenticate_header()},
+    )
 
 
 # ── MCP SSE transport ─────────────────────────────────────────────────────────

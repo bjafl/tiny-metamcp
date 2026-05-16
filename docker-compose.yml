@@ -10,6 +10,10 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       DATA_DIR: "/data"
       ADMIN_TOKEN: "${ADMIN_TOKEN}"
+      MCP_DOMAIN: "${MCP_DOMAIN}"
+      GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID}"
+      GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET}"
+      GITHUB_ALLOWED_USERS: "${GITHUB_ALLOWED_USERS}"
     volumes:
       - mcp-data:/data
     healthcheck:
@@ -40,8 +44,9 @@ services:
       OAUTH2_PROXY_UPSTREAMS: "http://mcp-aggregator:8000"
       OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
       OAUTH2_PROXY_REDIRECT_URL: "https://${MCP_DOMAIN}/oauth2/callback"
-      # MCP-endepunkter bypasser OAuth – aggregatoren sjekker Bearer-token
-      OAUTH2_PROXY_SKIP_AUTH_REGEX: "^/(mcp|messages)"
+      # MCP-endepunkter og OAuth-flyt bypasser oauth2-proxy
+      # (aggregatoren håndterer auth selv for disse rutene)
+      OAUTH2_PROXY_SKIP_AUTH_REGEX: "^/(mcp|messages|oauth(/.*)?|\\.well-known/oauth)"
       OAUTH2_PROXY_COOKIE_SECURE: "true"
       OAUTH2_PROXY_COOKIE_HTTPONLY: "true"
       OAUTH2_PROXY_COOKIE_SAMESITE: "lax"
