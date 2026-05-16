@@ -1,40 +1,40 @@
 set shell := ["bash", "-c"]
 
-# Vis tilgjengelige kommandoer
+# List available commands
 default:
     @just --list --unsorted
 
-# ── Miljø ─────────────────────────────────────────────────────────────────────
+# ── Environment ───────────────────────────────────────────────────────────────
 
-# Opprett .env med autogenererte secrets.
-# Bruk 'just init-env -i' for interaktiv modus (spør om domene og GitHub-verdier).
+# Generate .env with auto-generated secrets.
+# Use 'just init-env -i' for interactive mode (prompts for domain and GitHub values).
 init-env mode="":
     @bash scripts/init-env.sh "{{mode}}"
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 
-# Bygg og start alle tjenester i bakgrunnen
+# Build and start all services in the background
 up:
     docker compose up -d --build
 
-# Start i forgrunnen med live logg-output
+# Start in the foreground with live log output
 dev:
     docker compose up --build
 
-# Stopp alle tjenester
+# Stop all services
 down:
     docker compose down
 
-# Stopp og slett alle volumes (OBS: sletter persistert data)
+# Stop and delete all volumes (WARNING: destroys persisted data)
 down-volumes:
-    @read -rp "Sletter ALL data i volumes. Fortsett? [y/N] " c && [[ "${c,,}" == "y" ]]
+    @read -rp "Deletes ALL data in volumes. Continue? [y/N] " c && [[ "${c,,}" == "y" ]]
     docker compose down -v
 
-# Bygg images på nytt uten å starte
+# Rebuild images without starting
 build:
     docker compose build
 
-# Restart én eller alle tjenester  ('just restart' eller 'just restart mcp-aggregator')
+# Restart one or all services  ('just restart' or 'just restart mcp-aggregator')
 restart service="":
     #!/usr/bin/env bash
     if [ -n "{{service}}" ]; then
@@ -43,9 +43,9 @@ restart service="":
         docker compose restart
     fi
 
-# ── Logging og status ─────────────────────────────────────────────────────────
+# ── Logging and status ────────────────────────────────────────────────────────
 
-# Følg logger ('just logs' eller 'just logs mcp-aggregator')
+# Follow logs ('just logs' or 'just logs mcp-aggregator')
 logs service="":
     #!/usr/bin/env bash
     if [ -n "{{service}}" ]; then
@@ -54,11 +54,11 @@ logs service="":
         docker compose logs -f
     fi
 
-# Vis status for alle containere
+# Show status of all containers
 ps:
     docker compose ps
 
-# Sjekk aggregatorens health-endepunkt
+# Check the aggregator health endpoint
 health:
     @curl -sf http://localhost:8000/health | python3 -m json.tool 2>/dev/null \
-        || echo "Aggregator ikke tilgjengelig på localhost:8000"
+        || echo "Aggregator not available on localhost:8000"
