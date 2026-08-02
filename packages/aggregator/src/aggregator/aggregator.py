@@ -22,7 +22,7 @@ async def handle_list_tools(
             types.Tool(
                 name=f"{server_name}__{tool.name}",
                 description=f"[{server_name}] {tool.description or ''}".strip(),
-                inputSchema=tool.inputSchema,
+                inputSchema=tool.input_schema,
             )
         )
     return types.ListToolsResult(tools=tools)

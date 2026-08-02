@@ -120,7 +120,7 @@ async def api_list_tools():
             "server": name,
             "tool": tool.name,
             "description": tool.description,
-            "inputSchema": tool.inputSchema,
+            "inputSchema": tool.input_schema,
         }
         for name, tool in child_manager.all_tools()
     ]
