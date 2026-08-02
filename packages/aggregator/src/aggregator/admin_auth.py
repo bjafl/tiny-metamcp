@@ -46,23 +46,6 @@ def get_session_user(request: Request) -> str | None:
     return username
 
 
-def require_admin(request: Request) -> str:
-    """FastAPI dependency: returns username or redirects to login.
-
-    For HTMX requests sends HX-Redirect (client-side page redirect) so the
-    login page replaces the whole page, not a partial div.
-    """
-    user = get_session_user(request)
-    if user is None:
-        if request.headers.get("hx-request"):
-            raise HTTPException(
-                status_code=401,
-                headers={"HX-Redirect": "/admin/login"},
-            )
-        raise HTTPException(status_code=307, headers={"Location": "/admin/login"})
-    return user
-
-
 def require_api_auth(request: Request) -> None:
     """FastAPI dependency for /api/* routes.
 
