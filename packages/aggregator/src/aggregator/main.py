@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from . import admin_auth, log_capture, oauth
 from .aggregator import mcp_server, sse_transport
@@ -117,8 +117,6 @@ async def api_me(request: Request):
 
 
 # ── SPA static serving ───────────────────────────────────────────────────────
-
-from fastapi.responses import FileResponse
 
 
 @app.get("/admin")
