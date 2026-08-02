@@ -379,19 +379,20 @@ The package field is split on spaces and joined with args: `/usr/local/bin/my-mc
 packages/
 ├── aggregator/            # Python backend (FastAPI), installed as `aggregator`
 │   ├── src/
-│   │   ├── main.py
-│   │   ├── aggregator.py
-│   │   ├── admin_auth.py
-│   │   ├── oauth.py
-│   │   ├── child_manager.py
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── installer.py
-│   │   ├── log_capture.py
-│   │   ├── models.py
-│   │   └── api/
-│   │       ├── oauth_router.py
-│   │       └── routers.py
+│   │   └── aggregator/
+│   │       ├── main.py
+│   │       ├── aggregator.py
+│   │       ├── admin_auth.py
+│   │       ├── oauth.py
+│   │       ├── child_manager.py
+│   │       ├── config.py
+│   │       ├── database.py
+│   │       ├── installer.py
+│   │       ├── log_capture.py
+│   │       ├── models.py
+│   │       └── api/
+│   │           ├── oauth_router.py
+│   │           └── routers.py
 │   ├── Dockerfile
 │   └── pyproject.toml
 └── webui/                 # React/TS/Vite admin SPA, served by aggregator under /admin
