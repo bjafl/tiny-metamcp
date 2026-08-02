@@ -75,13 +75,18 @@ class ChildState:
             # Try to clean up the stack, but exceptions during cleanup should not mask the original error
             try:
                 await stack.aclose()
-            except BaseException as cleanup_exc:
+            except Exception as cleanup_exc:
                 # Log cleanup errors but don't let them mask the original failure
                 clog.warning("Error during stack cleanup: %s", cleanup_exc)
             self._close_log_fh()
             self.error = str(exc)
             clog.error("Failed to start: %s", exc)
-            raise
+            # Re-raise: if it's an Exception, raise as-is (preserving type for downstream handlers).
+            # If it's a BaseException that's not an Exception (e.g., CancelledError), convert to RuntimeError
+            # so downstream code using "except Exception:" can catch it (matching behavior of other server types).
+            if isinstance(exc, Exception):
+                raise
+            raise RuntimeError(self.error) from exc
 
     async def stop(self) -> None:
         clog = _child_logger(self.config.name)
