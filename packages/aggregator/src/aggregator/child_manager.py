@@ -75,7 +75,7 @@ class ChildState:
             # Try to clean up the stack, but exceptions during cleanup should not mask the original error
             try:
                 await stack.aclose()
-            except Exception as cleanup_exc:
+            except BaseException as cleanup_exc:
                 # Log cleanup errors but don't let them mask the original failure
                 clog.warning("Error during stack cleanup: %s", cleanup_exc)
             self._close_log_fh()
