@@ -376,31 +376,32 @@ The package field is split on spaces and joined with args: `/usr/local/bin/my-mc
 ## Project Structure
 
 ```
-.
-├── docker-compose.yml           Production setup (mcp-aggregator + Traefik labels)
-├── docker-compose.override.yml  Local override with exposed ports (not in git)
-├── Justfile                     Command shortcuts
-├── scripts/
-│   └── init-env.sh              Generates .env with auto-generated secrets
-├── .env.example                 Environment variable template
-└── aggregator/
-    ├── Dockerfile               Python 3.12 + uv + Node.js LTS + git
-    ├── pyproject.toml
-    └── src/mcp_aggregator/
-        ├── main.py              FastAPI app, lifespan, routes
-        ├── aggregator.py        MCP SSE server + tool aggregation
-        ├── child_manager.py     Process lifecycle for child servers
-        ├── installer.py         uvx / npx / git clone + npm build
-        ├── database.py          SQLite via SQLModel + aiosqlite
-        ├── models.py            SQLModel ORM models
-        ├── admin_auth.py        GitHub OAuth browser login + signed session cookies
-        ├── oauth.py             OAuth 2.1 + PKCE authorization server
-        ├── config.py            Environment variable settings
-        ├── log_capture.py       In-memory log buffer + SSE pub-sub
-        ├── templates/           Jinja2 templates (pico.css + HTMX + Alpine.js)
-        └── api/
-            ├── routers.py       REST API
-            └── oauth_router.py  OAuth 2.1 endpoints
+packages/
+├── aggregator/            # Python backend (FastAPI), installed as `aggregator`
+│   ├── src/
+│   │   └── aggregator/
+│   │       ├── main.py
+│   │       ├── aggregator.py
+│   │       ├── admin_auth.py
+│   │       ├── oauth.py
+│   │       ├── child_manager.py
+│   │       ├── config.py
+│   │       ├── database.py
+│   │       ├── installer.py
+│   │       ├── log_capture.py
+│   │       ├── models.py
+│   │       └── api/
+│   │           ├── oauth_router.py
+│   │           └── routers.py
+│   ├── Dockerfile
+│   └── pyproject.toml
+└── webui/                 # React/TS/Vite admin SPA, served by aggregator under /admin
+    └── src/
+        ├── main.tsx
+        ├── router.tsx
+        ├── components/
+        ├── hooks/
+        └── lib/
 ```
 
 ## Just Commands

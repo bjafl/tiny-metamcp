@@ -1,0 +1,23 @@
+[project]
+name = "mcp-aggregator"
+version = "2.0.1"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.52",
+    "mcp>=2",
+    "aiosqlite>=0.20",
+    "httpx>=0.27",
+    "anyio>=4.11",
+    "sse-starlette>=2.1",
+    "python-multipart>=0.0.9",
+    "itsdangerous>=2.2.0",
+    "sqlmodel>=0.0.38",
+]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "aggregator"
