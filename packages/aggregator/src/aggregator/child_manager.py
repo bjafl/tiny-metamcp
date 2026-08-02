@@ -6,9 +6,10 @@ from typing import Optional
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.types import Tool
 
-from .models import Server
+from .models import Server, ServerType
 from .installer import build_command, install
 from . import log_capture
 
@@ -34,9 +35,14 @@ class ChildState:
         return self.session is not None
 
     async def start(self) -> None:
+        clog = _child_logger(self.config.name)
+
+        if self.config.type == ServerType.PROXY:
+            await self._connect(clog, streamable_http_client(self.config.package))
+            return
+
         await install(self.config)
         cmd = build_command(self.config)
-        clog = _child_logger(self.config.name)
         clog.info("Starting: %s", " ".join(cmd))
 
         # Open per-child stderr log file
@@ -47,13 +53,14 @@ class ChildState:
             args=cmd[1:],
             env=self.config.get_env() or None,
         )
+        # Redirect child stderr to the per-child log file.
+        await self._connect(clog, stdio_client(params, errlog=self._log_fh))
 
+    async def _connect(self, clog: logging.LoggerAdapter, transport_cm) -> None:
+        """Shared session bring-up for both the stdio and proxy transports."""
         stack = AsyncExitStack()
         try:
-            # Redirect child stderr to the per-child log file.
-            read, write = await stack.enter_async_context(
-                stdio_client(params, errlog=self._log_fh)
-            )
+            read, write = await stack.enter_async_context(transport_cm)
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
             result = await session.list_tools()
