@@ -1,0 +1,12 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+packages/webui/dist
+packages/aggregator/webui_dist
+.env
+.env.*
+!.env.example
+.remember
+docs

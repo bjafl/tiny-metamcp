@@ -5,6 +5,7 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 DB_PATH = DATA_DIR / "aggregator.db"
 PACKAGES_DIR = DATA_DIR / "packages"
 LOGS_DIR = DATA_DIR / "logs"
+WEBUI_DIST_DIR = Path(os.getenv("WEBUI_DIST_DIR", "webui_dist"))
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

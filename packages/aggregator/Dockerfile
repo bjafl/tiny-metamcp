@@ -1,3 +1,16 @@
+# ── Stage 1: build the webui SPA ────────────────────────────────────────────
+FROM node:22-slim AS webui-build
+
+RUN corepack enable
+WORKDIR /repo
+
+COPY pnpm-workspace.yaml package.json ./
+COPY packages/webui packages/webui
+
+RUN pnpm install --filter webui
+RUN pnpm --filter webui build
+
+# ── Stage 2: aggregator runtime ─────────────────────────────────────────────
 FROM python:3.12-slim
 
 # System deps: git + curl (for uv) + Node.js LTS
@@ -13,13 +26,16 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
-COPY pyproject.toml .
-COPY src/ src/
+COPY packages/aggregator/pyproject.toml .
+COPY packages/aggregator/src ./src
 RUN pip install --no-cache-dir .
+
+COPY --from=webui-build /repo/packages/webui/dist ./webui_dist
+ENV WEBUI_DIST_DIR=/app/webui_dist
 
 RUN mkdir -p /data && chmod 777 /data
 
 EXPOSE 8000
 VOLUME ["/data"]
 
-CMD ["uvicorn", "mcp_aggregator.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+CMD ["uvicorn", "aggregator.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]

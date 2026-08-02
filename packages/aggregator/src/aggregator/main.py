@@ -10,7 +10,7 @@ from .aggregator import mcp_server, sse_transport
 from .api.oauth_router import router as oauth_router
 from .api.routers import router as api_router
 from .child_manager import child_manager
-from .config import ADMIN_TOKEN, LOG_LEVEL
+from .config import ADMIN_TOKEN, LOG_LEVEL, WEBUI_DIST_DIR
 from .database import init_db, list_servers
 
 logging.basicConfig(level=LOG_LEVEL)
@@ -114,3 +114,18 @@ async def api_me(request: Request):
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return {"username": user}
+
+
+# ── SPA static serving ───────────────────────────────────────────────────────
+
+from fastapi.responses import FileResponse
+
+
+@app.get("/admin")
+@app.get("/admin/{path:path}")
+async def admin_spa(path: str = ""):
+    dist_root = WEBUI_DIST_DIR.resolve()
+    candidate = (dist_root / path).resolve() if path else None
+    if candidate and candidate.is_file() and dist_root in candidate.parents:
+        return FileResponse(candidate)
+    return FileResponse(dist_root / "index.html")
