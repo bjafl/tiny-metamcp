@@ -1,6 +1,6 @@
 # tiny-metamcp
 
-Lightweight self-hosted MCP aggregator for Coolify. Aggregates MCP servers from PyPI, npm, and git repositories behind a single endpoint with GitHub OAuth authentication.
+Lightweight self-hosted MCP aggregator for Coolify. Aggregates MCP servers from PyPI, npm, git repositories, and remote HTTP servers behind a single endpoint with GitHub OAuth authentication.
 
 Inspired by [MetaMCP](https://github.com/metatool-ai/metatool-app).
 
@@ -159,7 +159,7 @@ curl -H "Authorization: Bearer $TOKEN" $BASE/api/servers | jq
 curl -X POST $BASE/api/servers \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"<name>","type":"pypi|npm|git|cmd","package":"<package>","args":[],"env":{}}'
+  -d '{"name":"<name>","type":"pypi|npm|git|cmd|proxy","package":"<package>","args":[],"env":{}}'
 
 # Enable / disable
 curl -X POST -H "Authorization: Bearer $TOKEN" $BASE/api/servers/<id>/enable
@@ -348,6 +348,27 @@ The package field is split on spaces and joined with args: `/usr/local/bin/my-mc
 
 ---
 
+### `proxy` — connect to a remote HTTP server
+
+Connects to an already-running MCP server via Streamable HTTP (SSE) instead of spawning a local subprocess. Useful for connecting to MCP servers running on other machines or in other containers.
+
+| Field | Value |
+|-------|-------|
+| Name | `remote-mcp` |
+| Type | `proxy` |
+| Package | `http://localhost:3000/mcp` |
+| Args | — (unused) |
+
+The `package` field contains the full HTTP URL of the remote MCP server's SSE endpoint. No authentication is currently supported for proxy connections.
+
+```bash
+curl -X POST $BASE/api/servers \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"remote-mcp","type":"proxy","package":"http://mcp-server-host:3000/mcp"}'
+```
+
+---
+
 ### Overview
 
 | Type | How it runs | Best for |
@@ -356,6 +377,7 @@ The package field is split on spaces and joined with args: `/usr/local/bin/my-mc
 | `npm` | `npx` (cached) | Node.js/TS from npm or GitHub |
 | `git` | clone → run locally | Unpublished Python repos |
 | `cmd` | none | Locally installed binaries |
+| `proxy` | HTTP SSE connection | Remote MCP servers |
 
 ---
 
