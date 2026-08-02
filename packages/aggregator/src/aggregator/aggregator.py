@@ -7,16 +7,15 @@ child servers. Tools are namespaced as `<server>__<tool>` to avoid conflicts.
 
 from mcp import types
 from mcp.server import Server
+from mcp.server.context import ServerRequestContext
 from mcp.server.sse import SseServerTransport
 
 from .child_manager import child_manager
 
-mcp_server = Server("mcp-aggregator")
-sse_transport = SseServerTransport("/messages")
 
-
-@mcp_server.list_tools()
-async def handle_list_tools() -> list[types.Tool]:
+async def handle_list_tools(
+    _ctx: ServerRequestContext, _params: types.PaginatedRequestParams | None
+) -> types.ListToolsResult:
     tools = []
     for server_name, tool in child_manager.all_tools():
         tools.append(
@@ -26,15 +25,22 @@ async def handle_list_tools() -> list[types.Tool]:
                 inputSchema=tool.inputSchema,
             )
         )
-    return tools
+    return types.ListToolsResult(tools=tools)
 
 
-@mcp_server.call_tool()
 async def handle_call_tool(
-    name: str, arguments: dict | None
-) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-    child, tool_name = child_manager.resolve(name)
+    _ctx: ServerRequestContext, params: types.CallToolRequestParams
+) -> types.CallToolResult:
+    child, tool_name = child_manager.resolve(params.name)
     if child is None or not child.running:
-        raise ValueError(f"No running server found for tool: {name!r}")
-    result = await child.session.call_tool(tool_name, arguments or {})
-    return result.content
+        raise ValueError(f"No running server found for tool: {params.name!r}")
+    result = await child.session.call_tool(tool_name, params.arguments or {})
+    return types.CallToolResult(content=result.content, is_error=result.is_error or False)
+
+
+mcp_server = Server(
+    "mcp-aggregator",
+    on_list_tools=handle_list_tools,
+    on_call_tool=handle_call_tool,
+)
+sse_transport = SseServerTransport("/messages")

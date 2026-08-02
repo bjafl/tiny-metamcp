@@ -149,7 +149,7 @@ async def api_call_tool(req: CallToolRequest):
             "server": req.server,
             "tool": req.tool,
             "content": content,
-            "isError": result.isError or False,
+            "isError": result.is_error or False,
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))

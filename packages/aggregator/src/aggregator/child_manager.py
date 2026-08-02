@@ -47,20 +47,13 @@ class ChildState:
             args=cmd[1:],
             env=self.config.get_env() or None,
         )
-        # Redirect child stderr to log file (supported by MCP SDK ≥ 1.6)
-        try:
-            params = StdioServerParameters(
-                command=cmd[0],
-                args=cmd[1:],
-                env=self.config.get_env() or None,
-                stderr=self._log_fh,
-            )
-        except TypeError:
-            pass  # older SDK version without stderr field
 
         stack = AsyncExitStack()
         try:
-            read, write = await stack.enter_async_context(stdio_client(params))
+            # Redirect child stderr to the per-child log file.
+            read, write = await stack.enter_async_context(
+                stdio_client(params, errlog=self._log_fh)
+            )
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
             result = await session.list_tools()

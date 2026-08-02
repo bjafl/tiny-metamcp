@@ -9,3 +9,4 @@ mcp-aggregator = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
+exclude = ["packages/webui"]
