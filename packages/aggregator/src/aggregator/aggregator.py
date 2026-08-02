@@ -10,13 +10,14 @@ from mcp.server import Server
 from mcp.server.context import ServerRequestContext
 from mcp.server.sse import SseServerTransport
 
+from . import meta_tools
 from .child_manager import child_manager
 
 
 async def handle_list_tools(
     _ctx: ServerRequestContext, _params: types.PaginatedRequestParams | None
 ) -> types.ListToolsResult:
-    tools = []
+    tools = list(meta_tools.TOOLS)
     for server_name, tool in child_manager.all_tools():
         tools.append(
             types.Tool(
@@ -31,6 +32,10 @@ async def handle_list_tools(
 async def handle_call_tool(
     _ctx: ServerRequestContext, params: types.CallToolRequestParams
 ) -> types.CallToolResult:
+    if params.name in meta_tools.NAMES:
+        content = await meta_tools.call(params.name, params.arguments or {})
+        return types.CallToolResult(content=content, is_error=False)
+
     child, tool_name = child_manager.resolve(params.name)
     if child is None or not child.running:
         raise ValueError(f"No running server found for tool: {params.name!r}")
