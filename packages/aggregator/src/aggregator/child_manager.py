@@ -70,8 +70,14 @@ class ChildState:
             self.error = None
             clog.info("Started – %d tool(s): %s",
                       len(self.tools), [t.name for t in self.tools])
-        except Exception as exc:
-            await stack.aclose()
+        except BaseException as exc:
+            # Catch both Exception and CancelledError (Python 3.8+: CancelledError is BaseException, not Exception)
+            # Try to clean up the stack, but exceptions during cleanup should not mask the original error
+            try:
+                await stack.aclose()
+            except BaseException as cleanup_exc:
+                # Log cleanup errors but don't let them mask the original failure
+                clog.warning("Error during stack cleanup: %s", cleanup_exc)
             self._close_log_fh()
             self.error = str(exc)
             clog.error("Failed to start: %s", exc)
