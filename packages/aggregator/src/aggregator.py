@@ -5,7 +5,7 @@ Presents a single MCP endpoint that multiplexes tools from all running
 child servers. Tools are namespaced as `<server>__<tool>` to avoid conflicts.
 """
 
-import mcp.types as types
+from mcp import types
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 

@@ -1,0 +1,11 @@
+[project]
+name = "tiny-metamcp"
+version = "2.1.0"
+requires-python = ">=3.14"
+dependencies = ["aggregator"]
+
+[tool.uv.sources]
+aggregator = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/*"]
