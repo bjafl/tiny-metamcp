@@ -9,6 +9,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { meQueryOptions } from "@/hooks/useMe";
 import { AppLayout } from "@/components/AppLayout";
 import { LoginPage } from "@/components/LoginPage";
+import { ServersPage } from "@/components/ServersPage";
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -43,7 +44,7 @@ const authedLayoutRoute = createRoute({
 export const serversRoute = createRoute({
   getParentRoute: () => authedLayoutRoute,
   path: "/",
-  component: () => <p>Servers page placeholder — replaced in Task 8</p>,
+  component: ServersPage,
 });
 
 export const logsRoute = createRoute({
