@@ -76,16 +76,41 @@ class ChildState:
             try:
                 await stack.aclose()
             except BaseException as cleanup_exc:
-                # Log cleanup errors but don't let them mask the original failure
-                clog.warning("Error during stack cleanup: %s", cleanup_exc)
+                # Log cleanup errors but don't let them mask the original failure.
+                # If the cleanup exception (e.g., ExceptionGroup from anyio) contains the real transport error,
+                # use it as the primary error instead of just the cancel signal.
+                clog.warning("Error during stack cleanup: %s", cleanup_exc, exc_info=True)
+                if not isinstance(exc, Exception):
+                    exc = cleanup_exc  # Use the real transport failure instead of the cancel signal
             self._close_log_fh()
-            self.error = str(exc)
+            # Extract meaningful error message: if it's an ExceptionGroup, try to find
+            # the first real error; otherwise use the exception's string representation.
+            error_msg = str(exc) or repr(exc)
+            if isinstance(exc, BaseException) and hasattr(exc, 'exceptions'):
+                # ExceptionGroup: extract first sub-exception's message
+                try:
+                    for sub_exc in exc.exceptions:
+                        sub_msg = str(sub_exc) or repr(sub_exc)
+                        if sub_msg and sub_msg.strip():
+                            error_msg = sub_msg
+                            break
+                except (AttributeError, TypeError):
+                    pass  # Fallback to the original message
+            self.error = error_msg or repr(exc)  # Never let self.error be empty/falsy
             clog.error("Failed to start: %s", exc)
-            # Re-raise: if it's an Exception, raise as-is (preserving type for downstream handlers).
-            # If it's a BaseException that's not an Exception (e.g., CancelledError), convert to RuntimeError
-            # so downstream code using "except Exception:" can catch it (matching behavior of other server types).
+            # Re-raise signal-like exceptions that should propagate immediately.
+            # KeyboardInterrupt/SystemExit should never be masked.
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise exc
+            # Note: if we caught a CancelledError here, it came from within our try block
+            # (i.e., from the transport or session initialization), not from genuine outer
+            # cancellation (which would propagate without entering the except handler).
+            # So we treat it as a connection failure, not genuine cancellation.
+            # Regular Exceptions re-raise as-is (preserving type for downstream handlers)
             if isinstance(exc, Exception):
-                raise
+                raise exc
+            # Non-Exception BaseExceptions are wrapped in RuntimeError so downstream
+            # code using "except Exception:" can catch them
             raise RuntimeError(self.error) from exc
 
     async def stop(self) -> None:
