@@ -4,10 +4,10 @@ FROM node:22-slim AS webui-build
 RUN corepack enable
 WORKDIR /repo
 
-COPY pnpm-workspace.yaml package.json ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/webui packages/webui
 
-RUN pnpm install --filter webui
+RUN pnpm install --frozen-lockfile --filter webui
 RUN pnpm --filter webui build
 
 # ── Stage 2: aggregator runtime ─────────────────────────────────────────────
