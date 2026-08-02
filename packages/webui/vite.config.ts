@@ -14,7 +14,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": "http://localhost:8000",
-      "/admin/login": "http://localhost:8000",
+      "/admin/login/github": "http://localhost:8000",
       "/admin/logout": "http://localhost:8000",
       "/oauth": "http://localhost:8000",
     },
