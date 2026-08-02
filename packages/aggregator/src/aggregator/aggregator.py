@@ -48,4 +48,4 @@ mcp_server = Server(
     on_list_tools=handle_list_tools,
     on_call_tool=handle_call_tool,
 )
-sse_transport = SseServerTransport("/messages")
+sse_transport = SseServerTransport("/messages/")

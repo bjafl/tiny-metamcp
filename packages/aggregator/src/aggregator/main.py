@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from . import admin_auth, log_capture, oauth
 from .aggregator import mcp_server, sse_transport
@@ -72,6 +72,23 @@ async def _check_bearer(request: Request) -> None:
 
 
 # ── MCP SSE transport ─────────────────────────────────────────────────────────
+#
+# connect_sse() fully sends its own SSE response itself (per mcp.server.sse's
+# module docstring); a FastAPI route handler that implicitly returns None
+# makes FastAPI try to send a second response on top once the connection
+# closes. Per the SDK's own documented example, returning a plain Response()
+# fixes it — /mcp stays an ordinary FastAPI route (Depends()-based auth still
+# applies), no ASGI-level restructuring needed here.
+#
+# /messages is different: handle_post_message() is a genuine raw ASGI
+# callable (scope, receive, send) that must be mounted, not wrapped in a
+# request/Response-style route — the SDK docstring mounts it directly via
+# Mount(). A FastAPI-decorated route around it double-sends on *every* call,
+# not just on close, since handle_post_message() sends its response
+# synchronously within the call. Mount() bypasses FastAPI's route dispatch
+# entirely (so Depends()-based auth doesn't run), hence the manual
+# _check_bearer call here.
+
 
 @app.get("/mcp")
 async def mcp_sse(request: Request, _: None = Depends(_check_bearer)):
@@ -79,11 +96,23 @@ async def mcp_sse(request: Request, _: None = Depends(_check_bearer)):
         request.scope, request.receive, request._send
     ) as (read, write):
         await mcp_server.run(read, write, mcp_server.create_initialization_options())
+    return Response()
 
 
-@app.post("/messages")
-async def mcp_messages(request: Request, _: None = Depends(_check_bearer)):
-    await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+async def _messages_asgi(scope, receive, send) -> None:
+    request = Request(scope, receive)
+    try:
+        await _check_bearer(request)
+    except HTTPException as exc:
+        response = Response(
+            content=exc.detail, status_code=exc.status_code, headers=exc.headers
+        )
+        await response(scope, receive, send)
+        return
+    await sse_transport.handle_post_message(scope, receive, send)
+
+
+app.mount("/messages", _messages_asgi)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
