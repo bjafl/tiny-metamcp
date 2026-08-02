@@ -126,6 +126,14 @@ async def admin_logout():
     return response
 
 
+@app.get("/api/me")
+async def api_me(request: Request):
+    user = admin_auth.get_session_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {"username": user}
+
+
 # ── Admin UI (session required) ───────────────────────────────────────────────
 
 @app.get("/admin", response_class=HTMLResponse)
