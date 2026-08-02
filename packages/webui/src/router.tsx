@@ -11,6 +11,7 @@ import { AppLayout } from "@/components/AppLayout";
 import { LoginPage } from "@/components/LoginPage";
 import { ServersPage } from "@/components/ServersPage";
 import { LogsPage } from "@/components/LogsPage";
+import { ToolTesterPage } from "@/components/ToolTesterPage";
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -57,7 +58,7 @@ export const logsRoute = createRoute({
 export const testerRoute = createRoute({
   getParentRoute: () => authedLayoutRoute,
   path: "/tester",
-  component: () => <p>Tool tester placeholder — replaced in Task 10</p>,
+  component: ToolTesterPage,
 });
 
 const routeTree = rootRoute.addChildren([
