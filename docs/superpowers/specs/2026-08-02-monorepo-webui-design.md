@@ -34,11 +34,21 @@ htmx and can be deleted outright once the SPA replaces them. Auth
 
 ## Decisions
 
-1. **Package layout:** keep `packages/aggregator/src/*.py` flat (no nested
-   package dir). Install it under import name `aggregator` via hatchling
-   source-mapping, not literally `src` (`src` as a top-level import name
-   risks colliding with other future workspace packages laid out the same
-   way). `Dockerfile` CMD becomes `aggregator.main:app`.
+1. **Package layout:** nest `packages/aggregator/src/*.py` one level down
+   into `packages/aggregator/src/aggregator/*.py` (restores the shape the
+   pre-refactor `aggregator/src/mcp_aggregator/` had, just relocated and
+   renamed — no import statements change, they're all relative). Build with
+   uv's own build backend (`uv_build`, `[tool.uv.build-backend] module-name
+   = "aggregator"`), keeping the whole toolchain on uv rather than adding
+   setuptools. This was chosen over two rejected alternatives, both tested
+   directly against this codebase: hatchling's `sources` path-rename (works
+   for a normal install, but fails under `uv sync`'s editable/dev-mode
+   install — hatchling error: "Dev mode installations are unsupported when
+   any path rewrite in the sources option changes a prefix rather than
+   removes it"); and `uv_build` with a flat `src/*.py` layout (errors,
+   since `uv_build` requires `module-root`/`module-name` to match the
+   physical directory structure exactly — it does not rename). `Dockerfile`
+   CMD becomes `aggregator.main:app`.
 2. **SPA serving:** FastAPI serves the built SPA directly via `StaticFiles`
    under `/admin` — one container, no CORS, cookie auth keeps working
    same-origin. No new docker-compose service, no Traefik changes.
@@ -55,8 +65,12 @@ htmx and can be deleted outright once the SPA replaces them. Auth
 
 ## Backend changes
 
-- `packages/aggregator/pyproject.toml`: add `[build-system]` (hatchling),
-  map `src` → import name `aggregator`.
+- Move `packages/aggregator/src/*.py` (and `src/api/`) into
+  `packages/aggregator/src/aggregator/`.
+- `packages/aggregator/pyproject.toml`: add
+  `[build-system] requires = ["uv_build>=0.11,<0.12"]`,
+  `build-backend = "uv_build"`, `[tool.uv.build-backend] module-name =
+  "aggregator"`.
 - `Dockerfile`: multi-stage — stage 1 builds `packages/webui` with
   `pnpm build`, stage 2 is the existing Python image; copies the built
   static assets in and mounts them under `/admin`; CMD module path fixed to
