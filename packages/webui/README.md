@@ -1,32 +1,25 @@
-# React + TypeScript + Vite
+# webui
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Admin SPA for the MCP Aggregator. Built with Vite, React, TypeScript,
+Tailwind CSS, shadcn/ui, and TanStack Router + Query.
 
-Currently, two official plugins are available:
+In production this package is built to static assets and served by the
+FastAPI backend (`packages/aggregator`) under `/admin`.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Development
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+pnpm dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+`pnpm dev` proxies `/api`, `/admin/login/github`, `/admin/logout`, and
+`/oauth/*` to a backend running locally on `http://localhost:8000` (see
+`vite.config.ts`) — start the aggregator separately for these to work.
+
+## Build
+
+```bash
+pnpm build
+```
+
+Type-checks with `tsc -b` and outputs static assets to `dist/`.
