@@ -10,6 +10,7 @@ import { meQueryOptions } from "@/hooks/useMe";
 import { AppLayout } from "@/components/AppLayout";
 import { LoginPage } from "@/components/LoginPage";
 import { ServersPage } from "@/components/ServersPage";
+import { LogsPage } from "@/components/LogsPage";
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -50,7 +51,7 @@ export const serversRoute = createRoute({
 export const logsRoute = createRoute({
   getParentRoute: () => authedLayoutRoute,
   path: "/logs",
-  component: () => <p>Logs page placeholder — replaced in Task 9</p>,
+  component: LogsPage,
 });
 
 export const testerRoute = createRoute({
