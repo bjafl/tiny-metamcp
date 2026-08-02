@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "pnpm --filter webui build && rm -rf packages/aggregator/webui_dist && cp -r packages/webui/dist packages/aggregator/webui_dist",
+    "dev:webui": "pnpm --filter webui dev"
   },
   "keywords": [],
   "author": "",
