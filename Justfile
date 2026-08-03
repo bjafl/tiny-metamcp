@@ -11,6 +11,12 @@ default:
 init-env mode="":
     @bash scripts/init-env.sh "{{mode}}"
 
+# ── Testing ───────────────────────────────────────────────────────────────────
+
+# Run the aggregator's test suite
+test:
+    cd packages/aggregator && uv run pytest
+
 # ── Docker Compose ────────────────────────────────────────────────────────────
 
 # Build and start all services in the background
