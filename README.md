@@ -41,7 +41,7 @@ MCP Client (Claude Web UI, Claude Desktop, etc.)
 
 ```bash
 git clone <repo-url>
-cd custom-mcp-meta
+cd tiny-metamcp
 
 # Non-interactive: generates secrets, sets CHANGE_ME for the rest
 just init-env
@@ -77,7 +77,7 @@ just logs   # follow output
 
 For local development, `docker-compose.override.yml` is merged automatically. It is in `.gitignore` and won't reach Coolify. The provided `docker-compose.override.yml` exposes port 8000 directly.
 
-For a local GitHub OAuth App, set the callback URL to `http://localhost:8000/admin/callback` (browser login) and `http://localhost:8000/oauth/callback` (MCP OAuth). Or register a second app for local use only.
+For a local GitHub OAuth App, set the callback URL to `http://localhost:8000/oauth/callback` — this single path handles both the admin browser login and the MCP client OAuth flow (see the setup step above). Or register a second app for local use only.
 
 ```bash
 just up
@@ -191,6 +191,23 @@ curl -H "Authorization: Bearer $TOKEN" "$BASE/api/logs/<server-name>/stderr" | j
 curl --no-buffer -H "Authorization: Bearer $TOKEN" "$BASE/api/logs/stream"
 curl --no-buffer -H "Authorization: Bearer $TOKEN" "$BASE/api/logs/stream?server=<server-name>"
 ```
+
+### MCP Meta Tools
+
+Beyond the REST API and web UI, the server registry can also be managed as **plain MCP tools**, callable by any client already authenticated to `/mcp` — no separate credentials, no REST calls. Useful for letting an LLM (Claude Desktop, Claude Web UI) manage its own server list directly from within a conversation.
+
+| Tool | Arguments | Description |
+|------|-----------|-------------|
+| `list_servers` | — | List all configured servers with status |
+| `add_server` | `name`, `type`, `package`, `args?`, `env?` | Add and start a new server |
+| `delete_server` | `name` | Stop and permanently remove a server |
+| `enable_server` | `name` | Enable and start a disabled server |
+| `disable_server` | `name` | Stop and disable a server without deleting it |
+| `restart_server` | `name` | Restart a running server |
+
+These tools are unprefixed — proxied tools are always namespaced `<server>__<tool>`, so there's no collision surface.
+
+> **Access model:** anything that can reach `/mcp` can fully manage the server registry (add/remove/enable/disable/restart any server) — the same access level as the REST API, just reachable from inside an MCP conversation instead of a separate HTTP call. `env` values returned by `list_servers` are redacted (`***`); variable names are visible but not their values, since this output can land in an LLM's conversation history rather than staying on the admin-only REST/web UI surface.
 
 ---
 
@@ -395,35 +412,87 @@ curl -X POST $BASE/api/servers \
 
 ---
 
+## Development
+
+### Backend (Python / uv)
+
+```bash
+cd packages/aggregator
+uv sync                    # installs runtime + dev deps (pytest, pytest-asyncio)
+uv run uvicorn aggregator.main:app --reload --port 8000
+```
+
+`uv sync` at the repo root (or inside `packages/aggregator`) installs the `dev` dependency group automatically — no extra flag needed.
+
+### Frontend (React / pnpm)
+
+```bash
+pnpm install
+just webui-dev               # (or: pnpm dev:webui) Vite dev server on :5173, proxying /api, /admin/login*, /oauth/* to :8000
+```
+
+Run the backend (above) and the frontend dev server side by side — the Vite proxy makes them behave as one origin during development, so cookie-based admin auth works without any CORS setup. `pnpm build` (from the repo root) builds the webui and copies it into `packages/aggregator/webui_dist`, matching what the Docker image serves in production.
+
+### Linting and formatting
+
+Python code is linted and formatted with [ruff](https://docs.astral.sh/ruff/) (config in `packages/aggregator/pyproject.toml`). A pre-commit hook runs `ruff check --fix` and `ruff format` automatically on every commit touching `packages/aggregator/`:
+
+```bash
+uv tool install pre-commit   # once, globally
+pre-commit install           # once, per clone — activates the git hook
+```
+
+Run manually without committing: `just lint` / `just format`.
+
+### Tests
+
+```bash
+just test
+# or directly:
+cd packages/aggregator && uv run pytest
+```
+
+---
+
 ## Project Structure
 
 ```
-packages/
-├── aggregator/            # Python backend (FastAPI), installed as `aggregator`
-│   ├── src/
-│   │   └── aggregator/
-│   │       ├── main.py
-│   │       ├── aggregator.py
-│   │       ├── admin_auth.py
-│   │       ├── oauth.py
-│   │       ├── child_manager.py
-│   │       ├── config.py
-│   │       ├── database.py
-│   │       ├── installer.py
-│   │       ├── log_capture.py
-│   │       ├── models.py
-│   │       └── api/
-│   │           ├── oauth_router.py
-│   │           └── routers.py
-│   ├── Dockerfile
-│   └── pyproject.toml
-└── webui/                 # React/TS/Vite admin SPA, served by aggregator under /admin
-    └── src/
-        ├── main.tsx
-        ├── router.tsx
-        ├── components/
-        ├── hooks/
-        └── lib/
+tiny-metamcp/
+├── packages/
+│   ├── aggregator/            # Python backend (FastAPI), installed as `aggregator`
+│   │   ├── src/
+│   │   │   └── aggregator/
+│   │   │       ├── main.py
+│   │   │       ├── aggregator.py
+│   │   │       ├── admin_auth.py
+│   │   │       ├── oauth.py
+│   │   │       ├── child_manager.py
+│   │   │       ├── config.py
+│   │   │       ├── database.py
+│   │   │       ├── installer.py
+│   │   │       ├── log_capture.py
+│   │   │       ├── meta_tools.py     # native MCP tools for server management
+│   │   │       ├── models.py
+│   │   │       └── api/
+│   │   │           ├── oauth_router.py
+│   │   │           └── routers.py
+│   │   ├── tests/              # pytest suite (child_manager, meta_tools)
+│   │   ├── Dockerfile
+│   │   └── pyproject.toml      # deps, ruff config, pytest config
+│   └── webui/                  # React/TS/Vite admin SPA, served by aggregator under /admin
+│       └── src/
+│           ├── main.tsx
+│           ├── router.tsx
+│           ├── components/
+│           ├── hooks/
+│           └── lib/
+├── scripts/
+│   └── init-env.sh
+├── docker-compose.yml
+├── Justfile
+├── pyproject.toml              # uv workspace root
+├── pnpm-workspace.yaml
+└── .pre-commit-config.yaml
 ```
 
 ## Just Commands
@@ -431,6 +500,10 @@ packages/
 ```
 just init-env          Generate .env (secrets auto-generated, rest CHANGE_ME)
 just init-env -i       Interactive mode — prompts for all values
+just test              Run the aggregator's pytest suite
+just lint              Check aggregator Python code with ruff
+just format            Format aggregator Python code with ruff
+just webui-dev         Start the webui Vite dev server
 just up                Build and start in the background
 just dev               Start in the foreground with live logs
 just down              Stop all services

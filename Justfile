@@ -17,6 +17,22 @@ init-env mode="":
 test:
     cd packages/aggregator && uv run pytest
 
+# ── Linting and formatting ────────────────────────────────────────────────────
+
+# Check the aggregator's Python code with ruff
+lint:
+    cd packages/aggregator && uvx ruff check src tests
+
+# Format the aggregator's Python code with ruff
+format:
+    cd packages/aggregator && uvx ruff format src tests
+
+# ── Frontend dev ──────────────────────────────────────────────────────────────
+
+# Start the webui Vite dev server (proxies API calls to :8000)
+webui-dev:
+    pnpm dev:webui
+
 # ── Docker Compose ────────────────────────────────────────────────────────────
 
 # Build and start all services in the background
