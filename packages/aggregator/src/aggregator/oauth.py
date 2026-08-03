@@ -270,8 +270,9 @@ async def _store_token(
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT OR REPLACE INTO oauth_tokens "
-            "(token, token_type, github_user, client_id, expires_at) VALUES (?,?,?,?,?)",
-            (token, token_type, github_user, client_id, time.time() + ttl),
+            "(token, token_type, github_user, client_id, expires_at, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (token, token_type, github_user, client_id, time.time() + ttl, time.time()),
         )
         await db.commit()
 
