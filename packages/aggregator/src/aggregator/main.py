@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from . import admin_auth, log_capture, oauth
-from .aggregator import mcp_server, sse_transport
+from .aggregator import mcp_server, sse_transport, streamable_manager
 from .api.oauth_router import router as oauth_router
 from .api.routers import router as api_router
 from .child_manager import child_manager
@@ -38,7 +38,8 @@ async def lifespan(app: FastAPI):
             except Exception as exc:
                 logger.error("Could not start %s on boot: %s", srv.name, exc)
     cleanup_task = asyncio.create_task(_token_cleanup_loop())
-    yield
+    async with streamable_manager.run():
+        yield
     cleanup_task.cancel()
     for name in list(child_manager._children):
         await child_manager.remove(name)
@@ -105,6 +106,17 @@ async def mcp_sse(request: Request, _: None = Depends(_check_bearer)):
         write,
     ):
         await mcp_server.run(read, write, mcp_server.create_initialization_options())
+    return Response()
+
+
+# Modern Streamable HTTP transport, same URL, different method: some clients
+# (Claude Code's --transport http, claude.ai connector reconnects) probe with
+# POST first and don't fall back to the legacy GET+SSE handshake above.
+# streamable_manager.handle_request() fully sends its own response (same
+# double-send hazard as connect_sse() above), hence the explicit Response().
+@app.post("/mcp")
+async def mcp_streamable(request: Request, _: None = Depends(_check_bearer)):
+    await streamable_manager.handle_request(request.scope, request.receive, request._send)
     return Response()
 
 

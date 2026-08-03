@@ -9,6 +9,7 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.context import ServerRequestContext
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from . import meta_tools
 from .child_manager import child_manager
@@ -49,3 +50,8 @@ mcp_server = Server(
     on_call_tool=handle_call_tool,
 )
 sse_transport = SseServerTransport("/messages/")
+
+# Modern Streamable HTTP transport (single endpoint, POST-first), mounted
+# alongside the legacy SSE transport above -- both wrap the same mcp_server,
+# which is stateless/reentrant across concurrent connections by design.
+streamable_manager = StreamableHTTPSessionManager(mcp_server, stateless=False)
