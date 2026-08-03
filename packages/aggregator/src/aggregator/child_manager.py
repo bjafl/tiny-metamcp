@@ -3,6 +3,7 @@ import contextlib
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
+from typing import Any
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -97,9 +98,18 @@ class ChildState:
                 await self._supervisor
             raise
 
-    def _build_transport(self, clog: logging.LoggerAdapter):
+    def _build_transport(
+        self, clog: logging.LoggerAdapter
+    ) -> contextlib.AbstractAsyncContextManager[tuple[Any, Any]]:
         """Return the async-context-manager transport for this child's
-        configured type, doing any type-specific prep first."""
+        configured type, doing any type-specific prep first.
+
+        Both `stdio_client()` and `streamable_http_client()` yield a plain
+        `(read, write)` stream pair on entry -- `tuple[Any, Any]` rather than
+        their own (differently-parametrized, partly-private) generic stream
+        types, since `_supervise()` only ever unpacks the pair and hands it
+        to `ClientSession()`, never touches the stream types directly.
+        """
         if self.config.type == ServerType.PROXY:
             clog.info("Connecting to remote MCP server: %s", self.config.package)
             return streamable_http_client(self.config.package)
