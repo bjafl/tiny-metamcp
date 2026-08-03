@@ -1,6 +1,7 @@
 import { Link, Outlet } from "@tanstack/react-router";
 import { useMe } from "@/hooks/useMe";
 import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export function AppLayout() {
   const { data: me } = useMe();
@@ -35,6 +36,7 @@ export function AppLayout() {
             </Link>
           </div>
           <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            <ThemeToggle />
             <span>{me?.username}</span>
             <Button
               variant="outline"
