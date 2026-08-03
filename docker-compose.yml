@@ -19,6 +19,9 @@ services:
       - 8000
     volumes:
       - mcp-data:/data
+    networks:
+      - default
+      - shared-mcp-net
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 30s
@@ -29,3 +32,12 @@ services:
 volumes:
   mcp-data:
     driver: local
+
+networks:
+  default:
+  # Pre-created on the host (docker network create shared-mcp-net) so this
+  # aggregator can proxy MCP servers deployed as separate Coolify projects
+  # (e.g. gstream's mcp-server), which Coolify otherwise network-isolates
+  # per-project.
+  shared-mcp-net:
+    external: true
