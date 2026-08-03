@@ -117,11 +117,17 @@ class ChildState:
             ):
                 exc = cleanup_exc
 
-            # Signal-like exceptions must never be masked, converted, or substituted.
+            # Signal-like exceptions must never be masked or converted.
+            # NOTE: must be "raise exc", not a bare "raise" - if the original exc was an
+            # internal CancelledError and stack.aclose() itself raised the signal, exc was
+            # rebound to cleanup_exc above, and a bare raise would re-raise the original
+            # CancelledError from sys.exc_info(), losing the signal entirely.
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                raise
+                raise exc
             # Genuine outer cancellation propagates untouched, as CancelledError, with the
             # task's pending cancellation left intact for the next await point.
+            # A bare raise is correct here: substitution requires "not is_genuine_cancel",
+            # so in this branch exc is always still the original exception.
             if is_genuine_cancel:
                 raise
 
