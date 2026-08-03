@@ -15,6 +15,8 @@ services:
       GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID}"
       GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET}"
       GITHUB_ALLOWED_USERS: "${GITHUB_ALLOWED_USERS}"
+    expose:
+      - 8000
     volumes:
       - mcp-data:/data
     healthcheck:
@@ -23,16 +25,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.mcp.rule=Host(`${MCP_DOMAIN}`)"
-      - "traefik.http.routers.mcp.entrypoints=https"
-      - "traefik.http.routers.mcp.tls=true"
-      - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
-      - "traefik.http.services.mcp.loadbalancer.server.port=8000"
-      # Disable response buffering so SSE streams are delivered immediately
-      - "traefik.http.middlewares.mcp-sse.headers.customResponseHeaders.X-Accel-Buffering=no"
-      - "traefik.http.routers.mcp.middlewares=mcp-sse"
 
 volumes:
   mcp-data:
