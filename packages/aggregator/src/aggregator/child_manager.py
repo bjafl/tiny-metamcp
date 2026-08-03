@@ -2,16 +2,15 @@ import asyncio
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
-from typing import Optional
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import Tool
 
-from .models import Server, ServerType
-from .installer import build_command, install
 from . import log_capture
+from .installer import build_command, install
+from .models import Server, ServerType
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +43,11 @@ class ChildState:
     """
 
     config: Server
-    session: Optional[ClientSession] = None
+    session: ClientSession | None = None
     tools: list[Tool] = field(default_factory=list)
-    error: Optional[str] = None
-    _supervisor: Optional[asyncio.Task] = field(default=None, repr=False)
-    _stop_event: Optional[asyncio.Event] = field(default=None, repr=False)
+    error: str | None = None
+    _supervisor: asyncio.Task | None = field(default=None, repr=False)
+    _stop_event: asyncio.Event | None = field(default=None, repr=False)
     _log_fh: object = field(default=None, repr=False)   # file handle for child stderr
 
     @property
@@ -62,7 +61,12 @@ class ChildState:
 
     async def start(self) -> None:
         if self.config.type != ServerType.PROXY:
-            await install(self.config)
+            try:
+                await install(self.config)
+            except Exception as exc:
+                self.error = str(exc) or repr(exc)
+                _child_logger(self.config.name).error("Install failed: %s", exc)
+                raise
         started: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._stop_event = asyncio.Event()
         self._supervisor = asyncio.create_task(
@@ -214,20 +218,30 @@ class ChildState:
                     # rebound to cleanup_exc above, and a bare raise would
                     # re-raise the original CancelledError from
                     # sys.exc_info() instead, losing the signal entirely.
-                    raise exc
+                    raise exc  # noqa: TRY201 -- see comment above, bare `raise` loses the signal here
 
-                # Extract a meaningful message: if it's an ExceptionGroup,
-                # find the first real sub-error; otherwise use str(exc).
-                error_msg = str(exc) or repr(exc)
-                if hasattr(exc, "exceptions"):
-                    try:
-                        for sub_exc in exc.exceptions:
-                            sub_msg = str(sub_exc) or repr(sub_exc)
-                            if sub_msg and sub_msg.strip():
-                                error_msg = sub_msg
-                                break
-                    except (AttributeError, TypeError):
-                        pass  # fall back to the original message
+                if is_genuine_cancel:
+                    # Nothing here was cancelled by a failed connection --
+                    # this task was cancelled from outside (e.g. start()'s
+                    # own caller giving up, or app shutdown). "CancelledError"
+                    # alone is a useless status() message, so say what
+                    # actually happened instead of falling through to the
+                    # empty-str(exc) case below.
+                    error_msg = "Startup was cancelled"
+                else:
+                    # Extract a meaningful message: if it's an
+                    # ExceptionGroup, find the first real sub-error;
+                    # otherwise use str(exc).
+                    error_msg = str(exc) or repr(exc)
+                    if hasattr(exc, "exceptions"):
+                        try:
+                            for sub_exc in exc.exceptions:
+                                sub_msg = str(sub_exc) or repr(sub_exc)
+                                if sub_msg and sub_msg.strip():
+                                    error_msg = sub_msg
+                                    break
+                        except (AttributeError, TypeError):
+                            pass  # fall back to the original message
                 self.error = error_msg or repr(exc)  # never let this be falsy
                 clog.error("Failed to start: %s", exc)
 
@@ -241,7 +255,9 @@ class ChildState:
                     if isinstance(exc, Exception):
                         started.set_exception(exc)
                     else:
-                        started.set_exception(RuntimeError(self.error))
+                        wrapped = RuntimeError(self.error)
+                        wrapped.__cause__ = exc
+                        started.set_exception(wrapped)
         finally:
             self.session = None
             self.tools = []
@@ -271,29 +287,50 @@ class ChildState:
 class ChildManager:
     def __init__(self) -> None:
         self._children: dict[str, ChildState] = {}
+        # One lock per server name, serializing add/remove/restart for that
+        # name. Without this, two concurrent calls for the same name (e.g.
+        # two overlapping restart_server tool calls) can each create their
+        # own supervisor task and race to win self._children[name] -- the
+        # loser's supervisor is left running with no reference anyone can
+        # call stop() on, leaking its child process indefinitely.
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _lock_for(self, name: str) -> asyncio.Lock:
+        lock = self._locks.get(name)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[name] = lock
+        return lock
 
     async def add(self, config: Server) -> ChildState:
-        if config.name in self._children:
-            await self.remove(config.name)
-        state = ChildState(config=config)
-        await state.start()
-        self._children[config.name] = state
-        return state
+        async with self._lock_for(config.name):
+            if config.name in self._children:
+                await self._remove_locked(config.name)
+            state = ChildState(config=config)
+            await state.start()
+            self._children[config.name] = state
+            return state
 
     async def remove(self, name: str) -> None:
+        async with self._lock_for(name):
+            await self._remove_locked(name)
+
+    async def _remove_locked(self, name: str) -> None:
+        """remove()'s body, for callers that already hold _lock_for(name)."""
         state = self._children.pop(name, None)
         if state:
             await state.stop()
 
     async def restart(self, name: str) -> ChildState:
-        state = self._children.get(name)
-        if not state:
-            raise KeyError(f"Unknown server: {name}")
-        await state.stop()
-        await state.start()
-        return state
+        async with self._lock_for(name):
+            state = self._children.get(name)
+            if not state:
+                raise KeyError(f"Unknown server: {name}")
+            await state.stop()
+            await state.start()
+            return state
 
-    def get(self, name: str) -> Optional[ChildState]:
+    def get(self, name: str) -> ChildState | None:
         return self._children.get(name)
 
     def all_tools(self) -> list[tuple[str, Tool]]:
@@ -303,7 +340,7 @@ class ChildManager:
                 result.extend((name, t) for t in state.tools)
         return result
 
-    def resolve(self, namespaced: str) -> tuple[Optional[ChildState], str]:
+    def resolve(self, namespaced: str) -> tuple[ChildState | None, str]:
         if "__" not in namespaced:
             return None, namespaced
         srv, tool = namespaced.split("__", 1)
