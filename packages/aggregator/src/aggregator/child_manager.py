@@ -55,27 +55,42 @@ class ChildState:
 
     async def start(self) -> None:
         await install(self.config)
-        started: asyncio.Future[None] = asyncio.get_event_loop().create_future()
+        started: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._stop_event = asyncio.Event()
         self._supervisor = asyncio.create_task(
             self._supervise(started), name=f"child-supervisor-{self.config.name}"
         )
-        await started  # raises whatever _supervise raised on startup failure
+        try:
+            await started  # raises whatever _supervise raised on startup failure
+        except BaseException:
+            # e.g. this task itself got cancelled while waiting. Tear the
+            # (possibly already-started) child down rather than leaking it
+            # with nothing left able to call stop() on it.
+            self._stop_event.set()
+            try:
+                await self._supervisor
+            except BaseException:
+                pass
+            raise
 
     async def _supervise(self, started: asyncio.Future) -> None:
         """Owns the child's whole lifecycle in a single detached task: opens
         the stdio transport, signals start() once ready (or on failure),
-        then holds the transport open until stop() signals _stop_event."""
+        then holds the transport open until stop() signals _stop_event.
+        Never raises out of the task itself -- stop() awaits this task and,
+        like the original AsyncExitStack-based teardown, a cleanup-time
+        exception here must not propagate to stop()'s caller."""
         clog = _child_logger(self.config.name)
-        cmd = build_command(self.config)
-        clog.info("Starting: %s", " ".join(cmd))
-        self._log_fh = log_capture.open_log_file(self.config.name)
-        params = StdioServerParameters(
-            command=cmd[0],
-            args=cmd[1:],
-            env=self.config.get_env() or None,
-        )
+        started_ok = False
         try:
+            cmd = build_command(self.config)
+            clog.info("Starting: %s", " ".join(cmd))
+            self._log_fh = log_capture.open_log_file(self.config.name)
+            params = StdioServerParameters(
+                command=cmd[0],
+                args=cmd[1:],
+                env=self.config.get_env() or None,
+            )
             async with AsyncExitStack() as stack:
                 # Redirect child stderr to the per-child log file.
                 read, write = await stack.enter_async_context(
@@ -89,19 +104,28 @@ class ChildState:
                 self.error = None
                 clog.info("Started – %d tool(s): %s",
                           len(self.tools), [t.name for t in self.tools])
-                started.set_result(None)
+                started_ok = True
+                if not started.done():
+                    started.set_result(None)
 
                 await self._stop_event.wait()
-                clog.info("Stopped")
-        except Exception as exc:
-            self.error = str(exc)
-            clog.error("Failed to start: %s", exc)
-            if not started.done():
-                started.set_exception(exc)
+            clog.info("Stopped")
+        except BaseException as exc:
+            if started_ok:
+                clog.warning("Error while stopping: %s", exc)
+            else:
+                self.error = str(exc)
+                clog.error("Failed to start: %s", exc)
+                if not started.done():
+                    started.set_exception(exc)
         finally:
             self.session = None
             self.tools = []
             self._close_log_fh()
+            if not started.done():
+                started.set_exception(
+                    RuntimeError("supervisor exited without signalling start")
+                )
 
     async def stop(self) -> None:
         if self._supervisor and not self._supervisor.done():

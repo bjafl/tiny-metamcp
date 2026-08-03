@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from . import admin_auth, log_capture, oauth
 from .aggregator import mcp_server, sse_transport
@@ -104,8 +104,10 @@ async def _messages_asgi(scope, receive, send) -> None:
     try:
         await _check_bearer(request)
     except HTTPException as exc:
-        response = Response(
-            content=exc.detail, status_code=exc.status_code, headers=exc.headers
+        # Same shape FastAPI's default exception handler would have sent
+        # for the old Depends()-based route.
+        response = JSONResponse(
+            {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers
         )
         await response(scope, receive, send)
         return
