@@ -118,6 +118,12 @@ export function AddServerDialog() {
               <Input id="env" value={env} onChange={(e) => setEnv(e.target.value)} />
             </div>
           </div>
+          {type === "proxy" ? (
+            <p className="text-xs text-muted-foreground">
+              Args and env are ignored for the proxy type — it connects to an
+              already-running server, nothing gets launched locally.
+            </p>
+          ) : null}
           {addServer.isError ? (
             <p className="text-sm text-destructive">{addServer.error.message}</p>
           ) : null}
