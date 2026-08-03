@@ -6,6 +6,16 @@ services:
       dockerfile: packages/aggregator/Dockerfile
     container_name: mcp-aggregator
     restart: unless-stopped
+    labels:
+      # Coolify's Traefik has no way to pick which of this container's
+      # networks to route through once it's on more than one -- without this
+      # it silently picked shared-mcp-net (which coolify-proxy isn't on),
+      # hanging every request. This must be the network Coolify's own
+      # coolify-proxy container is actually attached to for this resource
+      # (verify with `docker network ls` / `docker inspect coolify-proxy` on
+      # the host if this project is ever recreated as a new Coolify resource
+      # -- the name is that resource's UUID, not portable across recreation).
+      - "traefik.docker.network=zvuwbrddd8huzple7brnk5y9"
     environment:
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       DATA_DIR: "/data"
@@ -34,10 +44,11 @@ volumes:
     driver: local
 
 networks:
-  default:
   # Pre-created on the host (docker network create shared-mcp-net) so this
   # aggregator can proxy MCP servers deployed as separate Coolify projects
   # (e.g. gstream's mcp-server), which Coolify otherwise network-isolates
-  # per-project.
+  # per-project. "default" is intentionally NOT declared here -- Coolify
+  # manages its naming/creation itself; redeclaring it created a spurious
+  # duplicate network that coolify-proxy wasn't attached to.
   shared-mcp-net:
     external: true
