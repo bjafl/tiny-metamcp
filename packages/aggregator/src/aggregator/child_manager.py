@@ -55,6 +55,11 @@ class ChildState:
     def running(self) -> bool:
         return self.session is not None
 
+    # How long to wait for the supervisor to notice _stop_event before
+    # escalating to cancelling it directly -- see the except block in
+    # start() below.
+    _STOP_GRACE_SECONDS = 5.0
+
     async def start(self) -> None:
         if self.config.type != ServerType.PROXY:
             await install(self.config)
@@ -70,6 +75,19 @@ class ChildState:
             # (possibly already-started) child down rather than leaking it
             # with nothing left able to call stop() on it.
             self._stop_event.set()
+            if not self._supervisor.done():
+                # Setting _stop_event only helps once the supervisor has
+                # reached its own await on it -- if it's still stuck inside
+                # connection setup (a hung TCP connect, a child that never
+                # speaks MCP), nothing there is watching the event. Give it
+                # a grace period for the "already past setup" case, then
+                # cancel it directly -- it's blocked on an await, so unlike
+                # this method's own caller, it *can* be cancelled cleanly.
+                _, pending = await asyncio.wait(
+                    {self._supervisor}, timeout=self._STOP_GRACE_SECONDS
+                )
+                if pending:
+                    self._supervisor.cancel()
             try:
                 await self._supervisor
             except BaseException:
@@ -190,7 +208,13 @@ class ChildState:
                 if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                     if not started.done():
                         started.set_exception(exc)
-                    raise
+                    # Must be "raise exc", not a bare "raise": if the
+                    # original exc was an internal CancelledError and
+                    # stack.aclose() itself raised the signal, exc was
+                    # rebound to cleanup_exc above, and a bare raise would
+                    # re-raise the original CancelledError from
+                    # sys.exc_info() instead, losing the signal entirely.
+                    raise exc
 
                 # Extract a meaningful message: if it's an ExceptionGroup,
                 # find the first real sub-error; otherwise use str(exc).
