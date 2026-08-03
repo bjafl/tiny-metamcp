@@ -1,7 +1,6 @@
 import json
 import time as _time
 from enum import Enum
-from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
@@ -17,7 +16,7 @@ class ServerType(str, Enum):
 class Server(SQLModel, table=True):
     __tablename__ = "servers"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True, index=True)
     type: str
     package: str

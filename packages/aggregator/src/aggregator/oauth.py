@@ -19,7 +19,6 @@ import logging
 import secrets
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 import aiosqlite
 import httpx
@@ -141,7 +140,7 @@ def start_session(
 
 async def finish_session(
     github_code: str, github_state: str
-) -> Optional[tuple[str, str, str]]:
+) -> tuple[str, str, str] | None:
     """
     Exchange GitHub code, validate user, issue auth code.
     Returns (auth_code, client_redirect_uri, client_state) or None on any failure.
@@ -202,7 +201,7 @@ async def finish_session(
 
 async def exchange_code(
     code: str, code_verifier: str, client_id: str, redirect_uri: str
-) -> Optional[tuple[str, str]]:
+) -> tuple[str, str] | None:
     """Verify auth code + PKCE, issue (access_token, refresh_token)."""
     code_obj = _codes.pop(code, None)
     if not code_obj or code_obj.expires_at < time.time():
@@ -220,7 +219,7 @@ async def exchange_code(
     return access, refresh
 
 
-async def rotate_refresh(refresh_token: str) -> Optional[tuple[str, str]]:
+async def rotate_refresh(refresh_token: str) -> tuple[str, str] | None:
     """Validate refresh token, rotate to new (access_token, refresh_token)."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
@@ -243,15 +242,14 @@ async def rotate_refresh(refresh_token: str) -> Optional[tuple[str, str]]:
     return access, refresh
 
 
-async def validate_bearer(token: str) -> Optional[str]:
+async def validate_bearer(token: str) -> str | None:
     """Return github_user if token is a valid OAuth access token, else None."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT github_user FROM oauth_tokens "
-            "WHERE token=? AND token_type='access' AND expires_at>?",
-            (token, time.time()),
-        ) as cur:
-            row = await cur.fetchone()
+    async with aiosqlite.connect(DB_PATH) as db, db.execute(
+        "SELECT github_user FROM oauth_tokens "
+        "WHERE token=? AND token_type='access' AND expires_at>?",
+        (token, time.time()),
+    ) as cur:
+        row = await cur.fetchone()
     return row[0] if row else None
 
 

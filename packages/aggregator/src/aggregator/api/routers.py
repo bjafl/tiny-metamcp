@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from .. import log_capture
 from ..admin_auth import require_api_auth
 from ..child_manager import child_manager
-from ..models import Server, ServerType
 from ..database import (
     add_server,
     delete_server,
@@ -15,6 +14,7 @@ from ..database import (
     update_server_enabled,
 )
 from ..installer import uninstall
+from ..models import Server, ServerType
 
 router = APIRouter(dependencies=[Depends(require_api_auth)])
 

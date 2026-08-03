@@ -11,10 +11,9 @@ LogBroker provides an asyncio pub-sub for SSE streaming.
 import asyncio
 import collections
 import logging
-import time
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator
 
 from .config import LOGS_DIR
 

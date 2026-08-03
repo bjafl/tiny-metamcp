@@ -4,7 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel, select
 
 from .config import DB_PATH
-from .models import OAuthToken, Server, ServerType  # noqa: F401 – re-exported for callers
+from .models import (  # noqa: F401 – re-exported for callers
+    OAuthToken,
+    Server,
+    ServerType,
+)
 
 _DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
 _engine = create_async_engine(_DATABASE_URL)
