@@ -11,6 +11,7 @@ class ServerType(str, Enum):
     NPM = "npm"
     GIT = "git"
     CMD = "cmd"
+    PROXY = "proxy"
 
 
 class Server(SQLModel, table=True):

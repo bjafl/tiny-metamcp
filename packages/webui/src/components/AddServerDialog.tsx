@@ -93,6 +93,7 @@ export function AddServerDialog() {
                   <SelectItem value="npm">npm (npx)</SelectItem>
                   <SelectItem value="git">Git repo</SelectItem>
                   <SelectItem value="cmd">Command</SelectItem>
+                  <SelectItem value="proxy">Proxy (remote URL)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -103,7 +104,7 @@ export function AddServerDialog() {
               id="package"
               value={pkg}
               onChange={(e) => setPkg(e.target.value)}
-              placeholder="mcp-server-fetch or git+https://... or /usr/bin/cmd"
+              placeholder="mcp-server-fetch or git+https://... or /usr/bin/cmd or http://host:port/mcp"
               required
             />
           </div>

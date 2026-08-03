@@ -1,4 +1,4 @@
-export type ServerType = "pypi" | "npm" | "git" | "cmd";
+export type ServerType = "pypi" | "npm" | "git" | "cmd" | "proxy";
 
 export interface ServerConfig {
   id: number;
