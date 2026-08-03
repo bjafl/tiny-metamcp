@@ -134,6 +134,14 @@ async def _messages_asgi(scope, receive, send) -> None:
 app.mount("/messages", _messages_asgi)
 
 
+# ── Root ──────────────────────────────────────────────────────────────────────
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse("/admin", status_code=302)
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 
 
