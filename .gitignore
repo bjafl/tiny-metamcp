@@ -12,3 +12,4 @@ webui_dist/
 .DS_Store
 node_modules/
 .claude/worktrees/
+.ruff_cache/
