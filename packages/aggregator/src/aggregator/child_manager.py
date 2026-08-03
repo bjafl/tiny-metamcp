@@ -71,22 +71,64 @@ class ChildState:
             clog.info("Started – %d tool(s): %s",
                       len(self.tools), [t.name for t in self.tools])
         except BaseException as exc:
-            # Catch both Exception and CancelledError (Python 3.8+: CancelledError is BaseException, not Exception)
-            # Try to clean up the stack, but exceptions during cleanup should not mask the original error
+            # Catch BaseException, not Exception: when the connection fails, the anyio
+            # task group inside streamable_http_client cancels this task, so what actually
+            # surfaces here is a bare asyncio.CancelledError rather than the real transport
+            # error. We still need self.error set and a *catchable* error for the
+            # "except Exception:" callers (main.lifespan(), api.routers add/enable).
+            #
+            # A CancelledError arriving here is ambiguous: it is either anyio's internal
+            # task-group cancellation (above), or a genuine outer cancellation of this task
+            # (e.g. shutdown cancelling an in-flight start). Both enter this handler, and
+            # at THIS point both report task.cancelling() == 1 - so the count must NOT be
+            # sampled here.
+            #
+            # It has to be sampled *after* stack.aclose(): unwinding the stack exits
+            # anyio's cancel scopes, and each scope calls task.uncancel() once for every
+            # cancellation it issued itself. So a cancellation still pending after the
+            # stack is closed is one that nothing in the stack owns - i.e. a genuine outer
+            # cancel. Verified against anyio 4.14.2: internal -> 0, genuine -> 1.
+            cleanup_exc: BaseException | None = None
+            # Always clean up, whatever went wrong - including for genuine cancellation
+            # and for signal exceptions.
             try:
                 await stack.aclose()
-            except BaseException as cleanup_exc:
-                # Log cleanup errors but don't let them mask the original failure.
-                # If the cleanup exception (e.g., ExceptionGroup from anyio) contains the real transport error,
-                # use it as the primary error instead of just the cancel signal.
-                clog.warning("Error during stack cleanup: %s", cleanup_exc, exc_info=True)
-                if not isinstance(exc, Exception):
-                    exc = cleanup_exc  # Use the real transport failure instead of the cancel signal
+            except BaseException as exc_from_cleanup:
+                clog.warning("Error during stack cleanup: %s", exc_from_cleanup,
+                             exc_info=True)
+                cleanup_exc = exc_from_cleanup
             self._close_log_fh()
+
+            task = asyncio.current_task()
+            is_genuine_cancel = (
+                isinstance(exc, asyncio.CancelledError)
+                and task is not None
+                and task.cancelling() > 0
+            )
+
+            # Substitute only in the single case this exists to handle: an internal
+            # (non-genuine) CancelledError, where the cleanup exception carries the real
+            # connection failure and the CancelledError is just anyio's cancel signal.
+            # Never substitute for KeyboardInterrupt/SystemExit or a genuine outer cancel.
+            if (
+                cleanup_exc is not None
+                and isinstance(exc, asyncio.CancelledError)
+                and not is_genuine_cancel
+            ):
+                exc = cleanup_exc
+
+            # Signal-like exceptions must never be masked, converted, or substituted.
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            # Genuine outer cancellation propagates untouched, as CancelledError, with the
+            # task's pending cancellation left intact for the next await point.
+            if is_genuine_cancel:
+                raise
+
             # Extract meaningful error message: if it's an ExceptionGroup, try to find
             # the first real error; otherwise use the exception's string representation.
             error_msg = str(exc) or repr(exc)
-            if isinstance(exc, BaseException) and hasattr(exc, 'exceptions'):
+            if hasattr(exc, 'exceptions'):
                 # ExceptionGroup: extract first sub-exception's message
                 try:
                     for sub_exc in exc.exceptions:
@@ -98,19 +140,15 @@ class ChildState:
                     pass  # Fallback to the original message
             self.error = error_msg or repr(exc)  # Never let self.error be empty/falsy
             clog.error("Failed to start: %s", exc)
-            # Re-raise signal-like exceptions that should propagate immediately.
-            # KeyboardInterrupt/SystemExit should never be masked.
-            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                raise exc
-            # Note: if we caught a CancelledError here, it came from within our try block
-            # (i.e., from the transport or session initialization), not from genuine outer
-            # cancellation (which would propagate without entering the except handler).
-            # So we treat it as a connection failure, not genuine cancellation.
-            # Regular Exceptions re-raise as-is (preserving type for downstream handlers)
+
+            # Regular Exceptions re-raise as-is (preserving type for downstream handlers).
+            # NOTE: must be "raise exc", not a bare "raise" - exc may have been rebound to
+            # cleanup_exc above, and a bare raise would re-raise the original CancelledError
+            # from sys.exc_info() instead, which "except Exception:" callers cannot catch.
             if isinstance(exc, Exception):
                 raise exc
-            # Non-Exception BaseExceptions are wrapped in RuntimeError so downstream
-            # code using "except Exception:" can catch them
+            # Any remaining non-Exception BaseException is wrapped in RuntimeError so
+            # downstream code using "except Exception:" can catch it.
             raise RuntimeError(self.error) from exc
 
     async def stop(self) -> None:
