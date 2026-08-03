@@ -51,6 +51,7 @@ app.include_router(api_router, prefix="/api")
 
 # ── Bearer auth for MCP endpoints ────────────────────────────────────────────
 
+
 async def _check_bearer(request: Request) -> None:
     """
     Bearer auth for /mcp and /messages.
@@ -99,9 +100,10 @@ async def _check_bearer(request: Request) -> None:
 
 @app.get("/mcp")
 async def mcp_sse(request: Request, _: None = Depends(_check_bearer)):
-    async with sse_transport.connect_sse(
-        request.scope, request.receive, request._send
-    ) as (read, write):
+    async with sse_transport.connect_sse(request.scope, request.receive, request._send) as (
+        read,
+        write,
+    ):
         await mcp_server.run(read, write, mcp_server.create_initialization_options())
     return Response()
 
@@ -134,6 +136,7 @@ app.mount("/messages", _messages_asgi)
 
 # ── Health ────────────────────────────────────────────────────────────────────
 
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "servers": child_manager.status()}
@@ -141,10 +144,10 @@ async def health():
 
 # ── Admin auth routes (no session required) ───────────────────────────────────
 
+
 @app.get("/admin/login/github")
 async def admin_login_github():
     return admin_auth.login_redirect()
-
 
 
 @app.get("/admin/logout")

@@ -14,6 +14,7 @@ router = APIRouter()
 
 # ── Discovery ─────────────────────────────────────────────────────────────────
 
+
 @router.get("/.well-known/oauth-protected-resource")
 async def oauth_protected_resource():
     return oauth.protected_resource_metadata()
@@ -25,6 +26,7 @@ async def oauth_authorization_server():
 
 
 # ── Dynamic Client Registration (RFC7591) ─────────────────────────────────────
+
 
 @router.post("/register")
 async def oauth_register(request: Request):
@@ -47,6 +49,7 @@ async def oauth_register(request: Request):
 
 # ── Authorization request ─────────────────────────────────────────────────────
 
+
 async def _authorize_handler(
     response_type: str,
     client_id: str,
@@ -67,15 +70,15 @@ async def _authorize_handler(
         return JSONResponse({"error": "invalid_client"}, status_code=400)
 
     github_state = oauth.start_session(client_id, redirect_uri, code_challenge, state)
-    params = urllib.parse.urlencode({
-        "client_id": GITHUB_CLIENT_ID,
-        "redirect_uri": f"https://{MCP_DOMAIN}/oauth/callback",
-        "scope": "read:user",
-        "state": github_state,
-    })
-    return RedirectResponse(
-        f"https://github.com/login/oauth/authorize?{params}", status_code=302
+    params = urllib.parse.urlencode(
+        {
+            "client_id": GITHUB_CLIENT_ID,
+            "redirect_uri": f"https://{MCP_DOMAIN}/oauth/callback",
+            "scope": "read:user",
+            "state": github_state,
+        }
     )
+    return RedirectResponse(f"https://github.com/login/oauth/authorize?{params}", status_code=302)
 
 
 @router.get("/authorize")
@@ -89,8 +92,13 @@ async def oauth_authorize(
     scope: str = Query(default="mcp"),
 ):
     return await _authorize_handler(
-        response_type, client_id, redirect_uri, state,
-        code_challenge, code_challenge_method, scope,
+        response_type,
+        client_id,
+        redirect_uri,
+        state,
+        code_challenge,
+        code_challenge_method,
+        scope,
     )
 
 
@@ -106,8 +114,13 @@ async def oauth_authorize_alias(
     scope: str = Query(default="mcp"),
 ):
     return await _authorize_handler(
-        response_type, client_id, redirect_uri, state,
-        code_challenge, code_challenge_method, scope,
+        response_type,
+        client_id,
+        redirect_uri,
+        state,
+        code_challenge,
+        code_challenge_method,
+        scope,
     )
 
 
@@ -115,6 +128,7 @@ async def oauth_authorize_alias(
 # Both the admin browser flow and the MCP OAuth flow redirect here.
 # The admin flow sets an `admin_oauth_state` cookie before going to GitHub,
 # which serves as the discriminator.
+
 
 @router.get("/oauth/callback")
 async def oauth_callback(
@@ -134,8 +148,7 @@ async def oauth_callback(
     result = await oauth.finish_session(code, state)
     if not result:
         return HTMLResponse(
-            "<h1>Access denied</h1>"
-            "<p>Authentication failed or user is not authorized.</p>",
+            "<h1>Access denied</h1><p>Authentication failed or user is not authorized.</p>",
             status_code=403,
         )
 
@@ -145,6 +158,7 @@ async def oauth_callback(
 
 
 # ── Token endpoint ────────────────────────────────────────────────────────────
+
 
 async def _token_handler(
     grant_type: str,

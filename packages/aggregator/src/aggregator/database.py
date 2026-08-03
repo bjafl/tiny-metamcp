@@ -25,6 +25,7 @@ async def init_db() -> None:
 
 # ── Servers ───────────────────────────────────────────────────────────────────
 
+
 async def list_servers() -> list[Server]:
     async with _session_factory() as session:
         result = await session.execute(select(Server).order_by(Server.id))

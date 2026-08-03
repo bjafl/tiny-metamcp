@@ -21,6 +21,7 @@ router = APIRouter(dependencies=[Depends(require_api_auth)])
 
 # ── Server management ────────────────────────────────────────────────────────
 
+
 class AddServerRequest(BaseModel):
     name: str
     type: ServerType
@@ -49,7 +50,7 @@ async def api_add_server(req: AddServerRequest):
     try:
         config = await add_server(req.name, req.type, req.package, req.args, req.env)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         state = await child_manager.add(config)
@@ -84,7 +85,7 @@ async def api_enable_server(server_id: int):
         state = await child_manager.add(config)
         return {"id": server_id, "enabled": True, "tool_count": len(state.tools)}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/servers/{server_id}/disable")
@@ -105,13 +106,14 @@ async def api_restart_server(server_id: int):
     try:
         state = await child_manager.restart(config.name)
         return {"id": server_id, "tool_count": len(state.tools)}
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Server not running")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Server not running") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ── Tools ────────────────────────────────────────────────────────────────────
+
 
 @router.get("/tools")
 async def api_list_tools():
@@ -152,10 +154,11 @@ async def api_call_tool(req: CallToolRequest):
             "isError": result.is_error or False,
         }
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ── Logs ────────────────────────────────────────────────────────────────────
+
 
 @router.get("/logs")
 async def api_get_logs(server: str | None = None, limit: int = 200):
@@ -180,6 +183,7 @@ async def api_get_stderr(server_name: str, limit: int = 200):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _cfg(c: Server) -> dict:
     return {

@@ -1,11 +1,11 @@
 import json
 import time as _time
-from enum import Enum
+from enum import StrEnum
 
 from sqlmodel import Field, SQLModel
 
 
-class ServerType(str, Enum):
+class ServerType(StrEnum):
     PYPI = "pypi"
     NPM = "npm"
     GIT = "git"
@@ -20,8 +20,8 @@ class Server(SQLModel, table=True):
     name: str = Field(unique=True, index=True)
     type: str
     package: str
-    args: str = Field(default="[]")   # JSON array
-    env: str = Field(default="{}")    # JSON object
+    args: str = Field(default="[]")  # JSON array
+    env: str = Field(default="{}")  # JSON object
     enabled: bool = Field(default=True)
 
     def get_args(self) -> list[str]:

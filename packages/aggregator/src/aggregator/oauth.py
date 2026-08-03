@@ -33,20 +33,22 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
-ACCESS_TOKEN_TTL = 3600           # 1 hour
-REFRESH_TOKEN_TTL = 30 * 86400    # 30 days
-AUTH_CODE_TTL = 300               # 5 minutes
-SESSION_TTL = 600                 # 10 minutes
+ACCESS_TOKEN_TTL = 3600  # 1 hour
+REFRESH_TOKEN_TTL = 30 * 86400  # 30 days
+AUTH_CODE_TTL = 300  # 5 minutes
+SESSION_TTL = 600  # 10 minutes
 
 # ── In-memory stores (short-lived, lost on restart — users re-auth) ──────────
 
+
 @dataclass
 class _Session:
-    client_state: str    # original state from MCP client (passed back at end)
+    client_state: str  # original state from MCP client (passed back at end)
     client_id: str
     redirect_uri: str
     code_challenge: str
     expires_at: float
+
 
 @dataclass
 class _AuthCode:
@@ -56,8 +58,9 @@ class _AuthCode:
     github_user: str
     expires_at: float
 
-_sessions: dict[str, _Session] = {}   # github_state → _Session
-_codes: dict[str, _AuthCode] = {}     # our_code → _AuthCode
+
+_sessions: dict[str, _Session] = {}  # github_state → _Session
+_codes: dict[str, _AuthCode] = {}  # our_code → _AuthCode
 
 
 def _gc() -> None:
@@ -68,6 +71,7 @@ def _gc() -> None:
 
 
 # ── PKCE ─────────────────────────────────────────────────────────────────────
+
 
 def verify_pkce(code_verifier: str, code_challenge: str) -> bool:
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
@@ -122,9 +126,8 @@ async def validate_client(client_id: str, redirect_uri: str) -> bool:
 
 # ── Session lifecycle ─────────────────────────────────────────────────────────
 
-def start_session(
-    client_id: str, redirect_uri: str, code_challenge: str, client_state: str
-) -> str:
+
+def start_session(client_id: str, redirect_uri: str, code_challenge: str, client_state: str) -> str:
     """Store pending OAuth session. Returns github_state to embed in GitHub redirect."""
     _gc()
     github_state = secrets.token_urlsafe(32)
@@ -138,9 +141,7 @@ def start_session(
     return github_state
 
 
-async def finish_session(
-    github_code: str, github_state: str
-) -> tuple[str, str, str] | None:
+async def finish_session(github_code: str, github_state: str) -> tuple[str, str, str] | None:
     """
     Exchange GitHub code, validate user, issue auth code.
     Returns (auth_code, client_redirect_uri, client_state) or None on any failure.
@@ -199,6 +200,7 @@ async def finish_session(
 
 # ── Token exchange ────────────────────────────────────────────────────────────
 
+
 async def exchange_code(
     code: str, code_verifier: str, client_id: str, redirect_uri: str
 ) -> tuple[str, str] | None:
@@ -244,11 +246,14 @@ async def rotate_refresh(refresh_token: str) -> tuple[str, str] | None:
 
 async def validate_bearer(token: str) -> str | None:
     """Return github_user if token is a valid OAuth access token, else None."""
-    async with aiosqlite.connect(DB_PATH) as db, db.execute(
-        "SELECT github_user FROM oauth_tokens "
-        "WHERE token=? AND token_type='access' AND expires_at>?",
-        (token, time.time()),
-    ) as cur:
+    async with (
+        aiosqlite.connect(DB_PATH) as db,
+        db.execute(
+            "SELECT github_user FROM oauth_tokens "
+            "WHERE token=? AND token_type='access' AND expires_at>?",
+            (token, time.time()),
+        ) as cur,
+    ):
         row = await cur.fetchone()
     return row[0] if row else None
 
@@ -272,6 +277,7 @@ async def _store_token(
 
 
 # ── Discovery metadata ────────────────────────────────────────────────────────
+
 
 def protected_resource_metadata() -> dict:
     base = f"https://{MCP_DOMAIN}"

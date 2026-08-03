@@ -10,6 +10,7 @@ LogBroker provides an asyncio pub-sub for SSE streaming.
 
 import asyncio
 import collections
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -19,11 +20,12 @@ from .config import LOGS_DIR
 
 # ── Data model ────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class LogEntry:
-    ts: float          # unix timestamp
-    level: str         # DEBUG / INFO / WARNING / ERROR
-    server: str        # child server name, or "" for aggregator-level
+    ts: float  # unix timestamp
+    level: str  # DEBUG / INFO / WARNING / ERROR
+    server: str  # child server name, or "" for aggregator-level
     msg: str
 
     def as_dict(self) -> dict:
@@ -57,6 +59,7 @@ def get_entries(server: str | None = None, limit: int = 200) -> list[dict]:
 
 # ── Child stderr log files ────────────────────────────────────────────────────
 
+
 def log_file(server_name: str) -> Path:
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     return LOGS_DIR / f"{server_name}.log"
@@ -66,7 +69,7 @@ def open_log_file(server_name: str):
     """Open (or create) the per-child stderr log file in append mode."""
     p = log_file(server_name)
     p.parent.mkdir(parents=True, exist_ok=True)
-    return open(p, "a", buffering=1)   # line-buffered
+    return open(p, "a", buffering=1)  # line-buffered
 
 
 def read_log_file(server_name: str, limit: int = 200) -> list[str]:
@@ -85,16 +88,15 @@ def clear_log_file(server_name: str) -> None:
 
 # ── SSE pub-sub broker ────────────────────────────────────────────────────────
 
+
 class LogBroker:
     def __init__(self) -> None:
         self._subs: list[asyncio.Queue[LogEntry | None]] = []
 
     def publish(self, entry: LogEntry) -> None:
         for q in self._subs:
-            try:
+            with contextlib.suppress(asyncio.QueueFull):
                 q.put_nowait(entry)
-            except asyncio.QueueFull:
-                pass
 
     async def subscribe(self, server: str | None = None) -> AsyncIterator[LogEntry]:
         q: asyncio.Queue[LogEntry | None] = asyncio.Queue(maxsize=200)
@@ -114,6 +116,7 @@ _broker = LogBroker()
 
 
 # ── Python logging handler ────────────────────────────────────────────────────
+
 
 class MemoryLogHandler(logging.Handler):
     """Captures Python log records into the in-memory ring buffer."""

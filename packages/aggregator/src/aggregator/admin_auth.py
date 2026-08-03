@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 _signer = URLSafeTimedSerializer(SESSION_SECRET, salt="admin-session")
 _state_signer = URLSafeTimedSerializer(SESSION_SECRET, salt="admin-oauth-state")
 
-SESSION_MAX_AGE = 7 * 86_400   # 7 days
-STATE_MAX_AGE = 600              # 10 minutes
+SESSION_MAX_AGE = 7 * 86_400  # 7 days
+STATE_MAX_AGE = 600  # 10 minutes
 
 
 def get_session_user(request: Request) -> str | None:
@@ -39,7 +39,7 @@ def get_session_user(request: Request) -> str | None:
         return None
     try:
         username = _signer.loads(cookie, max_age=SESSION_MAX_AGE)
-    except (BadSignature, SignatureExpired):
+    except BadSignature, SignatureExpired:
         return None
     if GITHUB_ALLOWED_USERS and username not in GITHUB_ALLOWED_USERS:
         return None
@@ -65,18 +65,23 @@ def login_redirect() -> RedirectResponse:
     """Start GitHub OAuth flow for admin browser login."""
     state = secrets.token_urlsafe(32)
     state_token = _state_signer.dumps(state)
-    params = urllib.parse.urlencode({
-        "client_id": GITHUB_CLIENT_ID,
-        "redirect_uri": f"https://{MCP_DOMAIN}/oauth/callback",
-        "scope": "read:user",
-        "state": state,
-    })
+    params = urllib.parse.urlencode(
+        {
+            "client_id": GITHUB_CLIENT_ID,
+            "redirect_uri": f"https://{MCP_DOMAIN}/oauth/callback",
+            "scope": "read:user",
+            "state": state,
+        }
+    )
     response = RedirectResponse(
         f"https://github.com/login/oauth/authorize?{params}", status_code=302
     )
     response.set_cookie(
-        "admin_oauth_state", state_token,
-        httponly=True, max_age=STATE_MAX_AGE, samesite="lax",
+        "admin_oauth_state",
+        state_token,
+        httponly=True,
+        max_age=STATE_MAX_AGE,
+        samesite="lax",
     )
     return response
 
@@ -89,9 +94,7 @@ async def handle_callback(request: Request) -> RedirectResponse:
     error_description = request.query_params.get("error_description")
 
     def _login_error(msg: str) -> RedirectResponse:
-        return RedirectResponse(
-            f"/admin/login?error={urllib.parse.quote(msg)}", status_code=302
-        )
+        return RedirectResponse(f"/admin/login?error={urllib.parse.quote(msg)}", status_code=302)
 
     if error or not code or not state:
         return _login_error(error_description or error or "Missing code or state")
@@ -102,7 +105,7 @@ async def handle_callback(request: Request) -> RedirectResponse:
         return _login_error("Missing state cookie — possible CSRF")
     try:
         stored_state = _state_signer.loads(state_token, max_age=STATE_MAX_AGE)
-    except (BadSignature, SignatureExpired):
+    except BadSignature, SignatureExpired:
         return _login_error("Invalid or expired state — please try again")
     if not secrets.compare_digest(state, stored_state):
         return _login_error("State mismatch — please try again")
@@ -147,8 +150,12 @@ async def handle_callback(request: Request) -> RedirectResponse:
     session_value = _signer.dumps(username)
     response = RedirectResponse("/admin", status_code=302)
     response.set_cookie(
-        "admin_session", session_value,
-        httponly=True, max_age=SESSION_MAX_AGE, secure=True, samesite="lax",
+        "admin_session",
+        session_value,
+        httponly=True,
+        max_age=SESSION_MAX_AGE,
+        secure=True,
+        samesite="lax",
     )
     response.delete_cookie("admin_oauth_state")
     return response

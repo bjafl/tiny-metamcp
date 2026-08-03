@@ -72,7 +72,11 @@ async def _git_clone(config: Server) -> None:
     PACKAGES_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("Cloning %s → %s", config.package, clone_dir)
     proc = await asyncio.create_subprocess_exec(
-        "git", "clone", "--depth=1", config.package, str(clone_dir),
+        "git",
+        "clone",
+        "--depth=1",
+        config.package,
+        str(clone_dir),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -87,7 +91,9 @@ async def _git_clone(config: Server) -> None:
 async def _npm_install_and_build(clone_dir) -> None:
     logger.info("npm install: %s", clone_dir)
     proc = await asyncio.create_subprocess_exec(
-        "npm", "install", "--prefer-offline",
+        "npm",
+        "install",
+        "--prefer-offline",
         cwd=str(clone_dir),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -100,7 +106,9 @@ async def _npm_install_and_build(clone_dir) -> None:
     if "build" in pkg.get("scripts", {}):
         logger.info("npm run build: %s", clone_dir)
         proc = await asyncio.create_subprocess_exec(
-            "npm", "run", "build",
+            "npm",
+            "run",
+            "build",
             cwd=str(clone_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

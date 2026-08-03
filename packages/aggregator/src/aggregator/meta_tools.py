@@ -25,7 +25,7 @@ def _cfg(c: Server) -> dict:
         "args": c.get_args(),
         # Names only, not values -- this reaches an LLM's conversation
         # context over /mcp, not just the admin-only REST/webui surface.
-        "env": {k: "***" for k in c.get_env()},
+        "env": dict.fromkeys(c.get_env(), "***"),
         "enabled": c.enabled,
     }
 
@@ -129,10 +129,7 @@ TOOLS: list[types.Tool] = [
     ),
     types.Tool(
         name="add_server",
-        description=(
-            "Add and start a new MCP server "
-            f"({'/'.join(t.value for t in ServerType)})."
-        ),
+        description=(f"Add and start a new MCP server ({'/'.join(t.value for t in ServerType)})."),
         inputSchema={
             "type": "object",
             "properties": {

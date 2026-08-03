@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -48,7 +49,7 @@ class ChildState:
     error: str | None = None
     _supervisor: asyncio.Task | None = field(default=None, repr=False)
     _stop_event: asyncio.Event | None = field(default=None, repr=False)
-    _log_fh: object = field(default=None, repr=False)   # file handle for child stderr
+    _log_fh: object = field(default=None, repr=False)  # file handle for child stderr
 
     @property
     def running(self) -> bool:
@@ -92,10 +93,8 @@ class ChildState:
                 )
                 if pending:
                     self._supervisor.cancel()
-            try:
+            with contextlib.suppress(BaseException):
                 await self._supervisor
-            except BaseException:
-                pass
             raise
 
     def _build_transport(self, clog: logging.LoggerAdapter):
@@ -136,8 +135,7 @@ class ChildState:
             self.session = session
             self.tools = result.tools
             self.error = None
-            clog.info("Started – %d tool(s): %s",
-                      len(self.tools), [t.name for t in self.tools])
+            clog.info("Started – %d tool(s): %s", len(self.tools), [t.name for t in self.tools])
             started_ok = True
             if not started.done():
                 started.set_result(None)
@@ -157,8 +155,7 @@ class ChildState:
                 try:
                     await stack.aclose()
                 except BaseException as exc_from_cleanup:
-                    clog.warning("Error during stack cleanup: %s", exc_from_cleanup,
-                                 exc_info=True)
+                    clog.warning("Error during stack cleanup: %s", exc_from_cleanup, exc_info=True)
                 clog.warning("Error while stopping: %s", exc)
             else:
                 # Setup failed. When the connection itself fails, the anyio
@@ -183,8 +180,7 @@ class ChildState:
                 try:
                     await stack.aclose()
                 except BaseException as exc_from_cleanup:
-                    clog.warning("Error during stack cleanup: %s", exc_from_cleanup,
-                                 exc_info=True)
+                    clog.warning("Error during stack cleanup: %s", exc_from_cleanup, exc_info=True)
                     cleanup_exc = exc_from_cleanup
 
                 task = asyncio.current_task()
@@ -218,7 +214,7 @@ class ChildState:
                     # rebound to cleanup_exc above, and a bare raise would
                     # re-raise the original CancelledError from
                     # sys.exc_info() instead, losing the signal entirely.
-                    raise exc  # noqa: TRY201 -- see comment above, bare `raise` loses the signal here
+                    raise exc  # noqa: TRY201 -- see comment above
 
                 if is_genuine_cancel:
                     # Nothing here was cancelled by a failed connection --
@@ -240,7 +236,7 @@ class ChildState:
                                 if sub_msg and sub_msg.strip():
                                     error_msg = sub_msg
                                     break
-                        except (AttributeError, TypeError):
+                        except AttributeError, TypeError:
                             pass  # fall back to the original message
                 self.error = error_msg or repr(exc)  # never let this be falsy
                 clog.error("Failed to start: %s", exc)
@@ -263,9 +259,7 @@ class ChildState:
             self.tools = []
             self._close_log_fh()
             if not started.done():
-                started.set_exception(
-                    RuntimeError("supervisor exited without signalling start")
-                )
+                started.set_exception(RuntimeError("supervisor exited without signalling start"))
 
     async def stop(self) -> None:
         if self._supervisor and not self._supervisor.done():
@@ -277,10 +271,8 @@ class ChildState:
 
     def _close_log_fh(self) -> None:
         if self._log_fh:
-            try:
+            with contextlib.suppress(Exception):
                 self._log_fh.close()
-            except Exception:
-                pass
             self._log_fh = None
 
 
