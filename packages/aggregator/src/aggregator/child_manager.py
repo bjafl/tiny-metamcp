@@ -22,11 +22,31 @@ def _child_logger(name: str) -> logging.LoggerAdapter:
 
 @dataclass
 class ChildState:
+    """
+    A running (or starting/stopping) child MCP server.
+
+    The child's stdio transport keeps an anyio task group open for as long
+    as the process runs -- anyio requires that group to be entered and
+    exited by the same task. start()/stop() can be called from whatever
+    request happens to trigger them (a REST handler, a live MCP tool-call
+    handler, the app's own startup/shutdown), so the group can't just be
+    opened inline in start() and closed inline in stop(): those two calls
+    are not guaranteed to run in the same task, and a live MCP tool call in
+    particular runs nested inside the JSON-RPC dispatcher's own task group,
+    where leaving the child's group open past the handler's own task
+    aborts the whole session. A dedicated supervisor task owns the group
+    for the child's entire lifetime instead -- the same task opens it (in
+    _supervise) and closes it (when _stop_event fires) -- and start()/stop()
+    just signal that task and await its outcome via ordinary asyncio
+    primitives, which have no such same-task constraint.
+    """
+
     config: Server
     session: Optional[ClientSession] = None
     tools: list[Tool] = field(default_factory=list)
     error: Optional[str] = None
-    _stack: Optional[AsyncExitStack] = field(default=None, repr=False)
+    _supervisor: Optional[asyncio.Task] = field(default=None, repr=False)
+    _stop_event: Optional[asyncio.Event] = field(default=None, repr=False)
     _log_fh: object = field(default=None, repr=False)   # file handle for child stderr
 
     @property
@@ -35,54 +55,61 @@ class ChildState:
 
     async def start(self) -> None:
         await install(self.config)
-        cmd = build_command(self.config)
+        started: asyncio.Future[None] = asyncio.get_event_loop().create_future()
+        self._stop_event = asyncio.Event()
+        self._supervisor = asyncio.create_task(
+            self._supervise(started), name=f"child-supervisor-{self.config.name}"
+        )
+        await started  # raises whatever _supervise raised on startup failure
+
+    async def _supervise(self, started: asyncio.Future) -> None:
+        """Owns the child's whole lifecycle in a single detached task: opens
+        the stdio transport, signals start() once ready (or on failure),
+        then holds the transport open until stop() signals _stop_event."""
         clog = _child_logger(self.config.name)
+        cmd = build_command(self.config)
         clog.info("Starting: %s", " ".join(cmd))
-
-        # Open per-child stderr log file
         self._log_fh = log_capture.open_log_file(self.config.name)
-
         params = StdioServerParameters(
             command=cmd[0],
             args=cmd[1:],
             env=self.config.get_env() or None,
         )
-
-        stack = AsyncExitStack()
         try:
-            # Redirect child stderr to the per-child log file.
-            read, write = await stack.enter_async_context(
-                stdio_client(params, errlog=self._log_fh)
-            )
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
-            result = await session.list_tools()
-            self.session = session
-            self.tools = result.tools
-            self._stack = stack
-            self.error = None
-            clog.info("Started – %d tool(s): %s",
-                      len(self.tools), [t.name for t in self.tools])
+            async with AsyncExitStack() as stack:
+                # Redirect child stderr to the per-child log file.
+                read, write = await stack.enter_async_context(
+                    stdio_client(params, errlog=self._log_fh)
+                )
+                session = await stack.enter_async_context(ClientSession(read, write))
+                await session.initialize()
+                result = await session.list_tools()
+                self.session = session
+                self.tools = result.tools
+                self.error = None
+                clog.info("Started – %d tool(s): %s",
+                          len(self.tools), [t.name for t in self.tools])
+                started.set_result(None)
+
+                await self._stop_event.wait()
+                clog.info("Stopped")
         except Exception as exc:
-            await stack.aclose()
-            self._close_log_fh()
             self.error = str(exc)
             clog.error("Failed to start: %s", exc)
-            raise
+            if not started.done():
+                started.set_exception(exc)
+        finally:
+            self.session = None
+            self.tools = []
+            self._close_log_fh()
 
     async def stop(self) -> None:
-        clog = _child_logger(self.config.name)
-        if self._stack:
-            try:
-                await self._stack.aclose()
-                clog.info("Stopped")
-            except Exception as exc:
-                clog.warning("Error during stop: %s", exc)
-            finally:
-                self._stack = None
-                self.session = None
-                self.tools = []
-        self._close_log_fh()
+        if self._supervisor and not self._supervisor.done():
+            self._stop_event.set()
+            await self._supervisor
+        self._supervisor = None
+        self.session = None
+        self.tools = []
 
     def _close_log_fh(self) -> None:
         if self._log_fh:
