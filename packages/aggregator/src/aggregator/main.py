@@ -56,6 +56,13 @@ async def _check_bearer(request: Request) -> None:
     Bearer auth for /mcp and /messages.
     Accepts static ADMIN_TOKEN or a valid OAuth access token.
     Returns 401 + WWW-Authenticate so MCP clients can discover OAuth.
+
+    Called two ways: as a FastAPI Depends() on the /mcp route, and directly
+    (not via Depends()) from _messages_asgi below, since /messages is a raw
+    ASGI Mount that bypasses FastAPI's dependency injection. Keep both call
+    sites in mind if this signature ever needs another Depends()-injected
+    parameter -- the Depends() site would keep compiling silently while the
+    manual site would need updating too.
     """
     auth = request.headers.get("authorization", "")
     if auth.startswith("Bearer "):
@@ -100,6 +107,14 @@ async def mcp_sse(request: Request, _: None = Depends(_check_bearer)):
 
 
 async def _messages_asgi(scope, receive, send) -> None:
+    if scope["type"] != "http":
+        # This mount only ever serves POST /messages/; reject anything else
+        # (e.g. a websocket handshake) before Request() asserts scope["type"]
+        # == "http", which would otherwise surface as an unauthenticated
+        # client generating a server-side AssertionError.
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+        return
     request = Request(scope, receive)
     try:
         await _check_bearer(request)

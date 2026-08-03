@@ -23,7 +23,9 @@ def _cfg(c: Server) -> dict:
         "type": c.type,
         "package": c.package,
         "args": c.get_args(),
-        "env": c.get_env(),
+        # Names only, not values -- this reaches an LLM's conversation
+        # context over /mcp, not just the admin-only REST/webui surface.
+        "env": {k: "***" for k in c.get_env()},
         "enabled": c.enabled,
     }
 
@@ -108,8 +110,8 @@ async def _restart_server(arguments: dict) -> dict:
     await _find_by_name(name)  # validates existence with a clear error first
     try:
         state = await child_manager.restart(name)
-    except KeyError:
-        raise ValueError(f"Server {name!r} is not running")
+    except KeyError as exc:
+        raise ValueError(f"Server {name!r} is not running") from exc
     return {"name": name, "tool_count": len(state.tools)}
 
 
@@ -127,7 +129,10 @@ TOOLS: list[types.Tool] = [
     ),
     types.Tool(
         name="add_server",
-        description="Add and start a new MCP server (pypi/npm/git/cmd).",
+        description=(
+            "Add and start a new MCP server "
+            f"({'/'.join(t.value for t in ServerType)})."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
