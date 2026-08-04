@@ -140,7 +140,7 @@ npx @modelcontextprotocol/inspector
 
 Go to `https://<MCP_DOMAIN>/admin` — sign in with GitHub. From here you can:
 
-- **MCP Servers** — add, enable/disable, restart, and delete servers
+- **MCP Servers** — add, edit, enable/disable, restart, and delete servers
 - **Logs** — view aggregator logs and child process stderr in real time (live SSE stream)
 - **Tool Tester** — select a running server and tool, fill in JSON arguments, and call it directly
 
@@ -160,6 +160,12 @@ curl -X POST $BASE/api/servers \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"<name>","type":"pypi|npm|git|cmd|proxy","package":"<package>","args":[],"env":{}}'
+
+# Edit a server (partial update — only send the fields you want to change)
+curl -X PATCH $BASE/api/servers/<id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"env":{"KEY":"value"}}'
 
 # Enable / disable
 curl -X POST -H "Authorization: Bearer $TOKEN" $BASE/api/servers/<id>/enable
@@ -200,6 +206,7 @@ Beyond the REST API and web UI, the server registry can also be managed as **pla
 |------|-----------|-------------|
 | `list_servers` | — | List all configured servers with status |
 | `add_server` | `name`, `type`, `package`, `args?`, `env?` | Add and start a new server |
+| `edit_server` | `name`, `new_name?`, `type?`, `package?`, `args?`, `env?` | Edit an existing server's configuration (`name` identifies the server; only the other fields you provide are changed) |
 | `delete_server` | `name` | Stop and permanently remove a server |
 | `enable_server` | `name` | Enable and start a disabled server |
 | `disable_server` | `name` | Stop and disable a server without deleting it |
