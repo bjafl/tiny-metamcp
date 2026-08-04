@@ -94,6 +94,14 @@ async def api_update_server(server_id: int, req: ServerUpdateRequest):
     if was_running:
         await child_manager.remove(existing.name)
 
+    identity_changed = (
+        existing.name != config.name
+        or existing.type != config.type
+        or existing.package != config.package
+    )
+    if existing.type == ServerType.GIT.value and identity_changed:
+        await uninstall(existing)
+
     if not config.enabled:
         return {**_cfg(config), "running": False, "tool_count": 0, "error": None}
 

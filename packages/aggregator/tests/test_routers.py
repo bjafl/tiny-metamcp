@@ -147,3 +147,35 @@ async def test_patch_nonexistent_id_returns_404(client):
 async def test_patch_without_auth_returns_401(client):
     resp = await client.patch("/api/servers/1", json={"package": "http://x.invalid/mcp"})
     assert resp.status_code == 401
+
+
+async def test_patch_git_rename_uninstalls_old_checkout(client, monkeypatch):
+    old_name, new_name = "patch-git-old", "patch-git-new"
+    calls = []
+
+    async def fake_uninstall(config):
+        calls.append(config)
+
+    monkeypatch.setattr("aggregator.api.routers.uninstall", fake_uninstall)
+    try:
+        added = await client.post(
+            "/api/servers",
+            json={
+                "name": old_name,
+                "type": "git",
+                "package": "git+https://example.invalid/repo.git",
+            },
+            headers=AUTH_HEADERS,
+        )
+        server_id = added.json()["server"]["id"]
+
+        resp = await client.patch(
+            f"/api/servers/{server_id}", json={"name": new_name}, headers=AUTH_HEADERS
+        )
+        assert resp.status_code == 200
+
+        assert len(calls) == 1
+        assert calls[0].name == old_name
+    finally:
+        await _cleanup_by_name(old_name)
+        await _cleanup_by_name(new_name)

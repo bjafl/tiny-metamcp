@@ -145,3 +145,33 @@ async def test_edit_server_invalid_type_raises_value_error(proxy_target_url):
             await meta_tools.call("edit_server", {"name": name, "type": "not-a-real-type"})
     finally:
         await _cleanup_by_name(name)
+
+
+async def test_edit_server_git_rename_uninstalls_old_checkout(monkeypatch):
+    old_name, new_name = "meta-edit-git-old", "meta-edit-git-new"
+    calls = []
+
+    async def fake_uninstall(config):
+        calls.append(config)
+
+    monkeypatch.setattr("aggregator.meta_tools.uninstall", fake_uninstall)
+    try:
+        await meta_tools.call(
+            "add_server",
+            {
+                "name": old_name,
+                "type": "git",
+                "package": "git+https://example.invalid/repo.git",
+            },
+        )
+
+        edited = _payload(
+            await meta_tools.call("edit_server", {"name": old_name, "new_name": new_name})
+        )
+        assert edited["server"]["name"] == new_name
+
+        assert len(calls) == 1
+        assert calls[0].name == old_name
+    finally:
+        await _cleanup_by_name(old_name)
+        await _cleanup_by_name(new_name)

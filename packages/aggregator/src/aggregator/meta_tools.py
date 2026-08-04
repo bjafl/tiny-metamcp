@@ -99,6 +99,12 @@ async def _edit_server(arguments: dict) -> dict:
     if was_running:
         await child_manager.remove(server.name)
 
+    identity_changed = (
+        server.name != config.name or server.type != config.type or server.package != config.package
+    )
+    if server.type == ServerType.GIT.value and identity_changed:
+        await uninstall(server)
+
     if not config.enabled:
         return {"server": _cfg(config), "tools": [], "error": None}
 
