@@ -149,6 +149,52 @@ async def test_patch_without_auth_returns_401(client):
     assert resp.status_code == 401
 
 
+async def test_patch_while_running_without_rename_restarts_in_place(client, proxy_target_url):
+    name = "patch-running-same-name"
+    try:
+        added = await client.post(
+            "/api/servers",
+            json={"name": name, "type": "proxy", "package": proxy_target_url},
+            headers=AUTH_HEADERS,
+        )
+        server_id = added.json()["server"]["id"]
+        assert child_manager.get(name) is not None
+
+        resp = await client.patch(
+            f"/api/servers/{server_id}", json={"env": {"X": "1"}}, headers=AUTH_HEADERS
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["running"] is True
+        assert body["tool_count"] == 2
+        assert body["error"] is None
+        assert body["env"] == {"X": "1"}
+        assert child_manager.get(name) is not None
+    finally:
+        await _cleanup_by_name(name)
+
+
+async def test_patch_noop_does_not_restart_running_child(client, proxy_target_url):
+    name = "patch-noop"
+    try:
+        added = await client.post(
+            "/api/servers",
+            json={"name": name, "type": "proxy", "package": proxy_target_url},
+            headers=AUTH_HEADERS,
+        )
+        server_id = added.json()["server"]["id"]
+        original_session = child_manager.get(name).session
+
+        resp = await client.patch(f"/api/servers/{server_id}", json={}, headers=AUTH_HEADERS)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["running"] is True
+        assert body["tool_count"] == 2
+        assert child_manager.get(name).session is original_session
+    finally:
+        await _cleanup_by_name(name)
+
+
 async def test_patch_git_rename_uninstalls_old_checkout(client, monkeypatch):
     old_name, new_name = "patch-git-old", "patch-git-new"
     calls = []
@@ -179,3 +225,69 @@ async def test_patch_git_rename_uninstalls_old_checkout(client, monkeypatch):
     finally:
         await _cleanup_by_name(old_name)
         await _cleanup_by_name(new_name)
+
+
+async def test_patch_git_package_only_change_uninstalls_old_checkout(client, monkeypatch):
+    name = "patch-git-pkg-change"
+    calls = []
+
+    async def fake_uninstall(config):
+        calls.append(config)
+
+    monkeypatch.setattr("aggregator.api.routers.uninstall", fake_uninstall)
+    try:
+        added = await client.post(
+            "/api/servers",
+            json={
+                "name": name,
+                "type": "git",
+                "package": "git+https://example.invalid/repo-a.git",
+            },
+            headers=AUTH_HEADERS,
+        )
+        server_id = added.json()["server"]["id"]
+
+        resp = await client.patch(
+            f"/api/servers/{server_id}",
+            json={"package": "git+https://example.invalid/repo-b.git"},
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 200
+        assert len(calls) == 1
+        assert calls[0].name == name
+        assert calls[0].package == "git+https://example.invalid/repo-a.git"
+    finally:
+        await _cleanup_by_name(name)
+
+
+async def test_patch_git_to_non_git_type_change_uninstalls_old_checkout(client, monkeypatch):
+    name = "patch-git-type-change"
+    calls = []
+
+    async def fake_uninstall(config):
+        calls.append(config)
+
+    monkeypatch.setattr("aggregator.api.routers.uninstall", fake_uninstall)
+    try:
+        added = await client.post(
+            "/api/servers",
+            json={
+                "name": name,
+                "type": "git",
+                "package": "git+https://example.invalid/repo.git",
+            },
+            headers=AUTH_HEADERS,
+        )
+        server_id = added.json()["server"]["id"]
+
+        resp = await client.patch(
+            f"/api/servers/{server_id}",
+            json={"type": "cmd", "package": "/no/such/binary"},
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 200
+        assert len(calls) == 1
+        assert calls[0].name == name
+        assert calls[0].type == "git"
+    finally:
+        await _cleanup_by_name(name)

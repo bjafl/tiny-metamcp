@@ -147,6 +147,39 @@ async def test_edit_server_invalid_type_raises_value_error(proxy_target_url):
         await _cleanup_by_name(name)
 
 
+async def test_edit_server_while_running_without_rename_restarts_in_place(proxy_target_url):
+    name = "meta-edit-same-name"
+    try:
+        await meta_tools.call(
+            "add_server", {"name": name, "type": "proxy", "package": proxy_target_url}
+        )
+        assert child_manager.get(name) is not None
+
+        edited = _payload(await meta_tools.call("edit_server", {"name": name, "env": {"X": "1"}}))
+        assert edited["error"] is None
+        assert set(edited["tools"]) == {"echo", "add"}
+        assert edited["server"]["env"] == {"X": "***"}
+        assert child_manager.get(name) is not None
+    finally:
+        await _cleanup_by_name(name)
+
+
+async def test_edit_server_noop_does_not_restart_running_child(proxy_target_url):
+    name = "meta-edit-noop"
+    try:
+        await meta_tools.call(
+            "add_server", {"name": name, "type": "proxy", "package": proxy_target_url}
+        )
+        original_session = child_manager.get(name).session
+
+        edited = _payload(await meta_tools.call("edit_server", {"name": name}))
+        assert edited["error"] is None
+        assert set(edited["tools"]) == {"echo", "add"}
+        assert child_manager.get(name).session is original_session
+    finally:
+        await _cleanup_by_name(name)
+
+
 async def test_edit_server_git_rename_uninstalls_old_checkout(monkeypatch):
     old_name, new_name = "meta-edit-git-old", "meta-edit-git-new"
     calls = []
@@ -175,3 +208,60 @@ async def test_edit_server_git_rename_uninstalls_old_checkout(monkeypatch):
     finally:
         await _cleanup_by_name(old_name)
         await _cleanup_by_name(new_name)
+
+
+async def test_edit_server_git_package_only_change_uninstalls_old_checkout(monkeypatch):
+    name = "meta-edit-git-pkg-change"
+    calls = []
+
+    async def fake_uninstall(config):
+        calls.append(config)
+
+    monkeypatch.setattr("aggregator.meta_tools.uninstall", fake_uninstall)
+    try:
+        await meta_tools.call(
+            "add_server",
+            {"name": name, "type": "git", "package": "git+https://example.invalid/repo-a.git"},
+        )
+
+        edited = _payload(
+            await meta_tools.call(
+                "edit_server",
+                {"name": name, "package": "git+https://example.invalid/repo-b.git"},
+            )
+        )
+        assert edited["server"]["package"] == "git+https://example.invalid/repo-b.git"
+
+        assert len(calls) == 1
+        assert calls[0].name == name
+        assert calls[0].package == "git+https://example.invalid/repo-a.git"
+    finally:
+        await _cleanup_by_name(name)
+
+
+async def test_edit_server_git_to_non_git_type_change_uninstalls_old_checkout(monkeypatch):
+    name = "meta-edit-git-type-change"
+    calls = []
+
+    async def fake_uninstall(config):
+        calls.append(config)
+
+    monkeypatch.setattr("aggregator.meta_tools.uninstall", fake_uninstall)
+    try:
+        await meta_tools.call(
+            "add_server",
+            {"name": name, "type": "git", "package": "git+https://example.invalid/repo.git"},
+        )
+
+        edited = _payload(
+            await meta_tools.call(
+                "edit_server", {"name": name, "type": "cmd", "package": "/no/such/binary"}
+            )
+        )
+        assert edited["server"]["type"] == "cmd"
+
+        assert len(calls) == 1
+        assert calls[0].name == name
+        assert calls[0].type == "git"
+    finally:
+        await _cleanup_by_name(name)
