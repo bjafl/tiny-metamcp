@@ -58,10 +58,10 @@ export function AddServerDialog({
   open: openProp,
   onOpenChange,
 }: AddServerDialogProps = {}) {
-  const isEdit = server != null;
+  const controlled = onOpenChange !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
-  const open = isEdit ? (openProp ?? false) : internalOpen;
-  const setOpen = isEdit ? (onOpenChange ?? (() => {})) : setInternalOpen;
+  const open = controlled ? (openProp ?? false) : internalOpen;
+  const setOpen = controlled ? onOpenChange : setInternalOpen;
 
   const [name, setName] = useState("");
   const [type, setType] = useState<ServerType>("pypi");
@@ -70,10 +70,11 @@ export function AddServerDialog({
   const [env, setEnv] = useState("");
   const addServer = useAddServer();
   const editServer = useEditServer();
-  const mutation = isEdit ? editServer : addServer;
+  const mutation = controlled ? editServer : addServer;
 
   useEffect(() => {
     if (!open) return;
+    editServer.reset();
     setName(server?.name ?? "");
     setType(server?.type ?? "pypi");
     setPkg(server?.package ?? "");
@@ -84,13 +85,13 @@ export function AddServerDialog({
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const payload = { name, type, package: pkg, args: parseArgs(args), env: parseEnv(env) };
-    if (isEdit && server) {
+    if (controlled && server) {
       await editServer.mutateAsync({ id: server.id, input: payload });
     } else {
       await addServer.mutateAsync(payload);
     }
     setOpen(false);
-    if (!isEdit) {
+    if (!controlled) {
       setName("");
       setPkg("");
       setArgs("");
@@ -100,14 +101,14 @@ export function AddServerDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      {!isEdit ? (
+      {!controlled ? (
         <DialogTrigger asChild>
           <Button>Add server</Button>
         </DialogTrigger>
       ) : null}
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit server" : "Add server"}</DialogTitle>
+          <DialogTitle>{controlled ? "Edit server" : "Add server"}</DialogTitle>
         </DialogHeader>
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div className="grid grid-cols-2 gap-4">
@@ -173,10 +174,10 @@ export function AddServerDialog({
           <DialogFooter>
             <Button type="submit" disabled={mutation.isPending}>
               {mutation.isPending
-                ? isEdit
+                ? controlled
                   ? "Saving…"
                   : "Installing…"
-                : isEdit
+                : controlled
                   ? "Save changes"
                   : "Add server"}
             </Button>
