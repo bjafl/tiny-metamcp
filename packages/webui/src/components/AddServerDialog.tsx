@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Dialog,
@@ -47,11 +47,13 @@ function formatEnv(env: Record<string, string>): string {
     .join(", ");
 }
 
-interface AddServerDialogProps {
-  server?: ServerConfig;
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
-}
+// `server`, `open`, and `onOpenChange` must all be provided together (edit
+// mode, controlled by the caller) or all omitted (add mode, self-contained
+// trigger button) -- this makes the otherwise-possible "edit-mode chrome
+// with no server to edit" combination unrepresentable.
+type AddServerDialogProps =
+  | { server?: undefined; open?: undefined; onOpenChange?: undefined }
+  | { server: ServerConfig; open: boolean; onOpenChange: (open: boolean) => void };
 
 export function AddServerDialog({
   server,
@@ -73,10 +75,23 @@ export function AddServerDialog({
   const addServer = useAddServer();
   const editServer = useEditServer();
   const mutation = controlled ? editServer : addServer;
+  const resetEditServer = editServer.reset;
+  const resetAddServer = addServer.reset;
+
+  // Tracks which server (by id) the fields were last prefilled for, so a
+  // background refetch that changes `server`'s identity without changing
+  // which row is being edited doesn't wipe in-progress input.
+  const prefilledForId = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!open) return;
-    editServer.reset();
+    if (!open) {
+      prefilledForId.current = null;
+      return;
+    }
+    if (server && prefilledForId.current === server.id) return;
+    prefilledForId.current = server?.id ?? null;
+    resetEditServer();
+    resetAddServer();
     setName(server?.name ?? "");
     setType(server?.type ?? "pypi");
     setPkg(server?.package ?? "");
@@ -86,7 +101,7 @@ export function AddServerDialog({
     setEnv(envStr);
     setInitialArgs(argsStr);
     setInitialEnv(envStr);
-  }, [open, server]);
+  }, [open, server, resetEditServer, resetAddServer]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -94,18 +109,14 @@ export function AddServerDialog({
       const payload: Partial<AddServerInput> = { name, type, package: pkg };
       if (args !== initialArgs) payload.args = parseArgs(args);
       if (env !== initialEnv) payload.env = parseEnv(env);
-      await editServer.mutateAsync({ id: server.id, input: payload });
+      const result = await editServer.mutateAsync({ id: server.id, input: payload });
+      if (result.error) return;
     } else {
       const payload = { name, type, package: pkg, args: parseArgs(args), env: parseEnv(env) };
-      await addServer.mutateAsync(payload);
+      const result = await addServer.mutateAsync(payload);
+      if (result.error) return;
     }
     setOpen(false);
-    if (!controlled) {
-      setName("");
-      setPkg("");
-      setArgs("");
-      setEnv("");
-    }
   }
 
   return (
@@ -177,7 +188,8 @@ export function AddServerDialog({
           ) : null}
           {mutation.data?.error ? (
             <p className="text-sm text-destructive">
-              Started with error: {mutation.data.error}
+              {controlled ? "Saved, but failed to restart" : "Started with error"}:{" "}
+              {mutation.data.error}
             </p>
           ) : null}
           <DialogFooter>

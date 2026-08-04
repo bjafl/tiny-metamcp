@@ -24,6 +24,12 @@ export function ServerTable({ servers }: { servers: ServerConfig[] }) {
   const restartServer = useRestartServer();
   const deleteServer = useDeleteServer();
   const [editingServer, setEditingServer] = useState<ServerConfig | null>(null);
+  // Holds the most recently edited server and is never reset to null once
+  // set, unlike `editingServer` -- AddServerDialog's props require `server`
+  // whenever `open`/`onOpenChange` are passed, so this keeps it mounted
+  // (open toggling via `editingServer`) instead of remounting it on every
+  // close, which would lose Radix's exit animation.
+  const [dialogServer, setDialogServer] = useState<ServerConfig | null>(null);
 
   return (
     <>
@@ -76,7 +82,14 @@ export function ServerTable({ servers }: { servers: ServerConfig[] }) {
                     Enable
                   </Button>
                 )}
-                <Button size="sm" variant="outline" onClick={() => setEditingServer(s)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setDialogServer(s);
+                    setEditingServer(s);
+                  }}
+                >
                   Edit
                 </Button>
                 <Button
@@ -95,13 +108,15 @@ export function ServerTable({ servers }: { servers: ServerConfig[] }) {
           ))}
         </TableBody>
       </Table>
-      <AddServerDialog
-        server={editingServer ?? undefined}
-        open={editingServer !== null}
-        onOpenChange={(o) => {
-          if (!o) setEditingServer(null);
-        }}
-      />
+      {dialogServer ? (
+        <AddServerDialog
+          server={dialogServer}
+          open={editingServer !== null}
+          onOpenChange={(o) => {
+            if (!o) setEditingServer(null);
+          }}
+        />
+      ) : null}
     </>
   );
 }
