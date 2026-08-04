@@ -44,7 +44,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
-  editServer: (id: number, input: AddServerInput) =>
+  editServer: (id: number, input: Partial<AddServerInput>) =>
     request<ServerConfig>(`/api/servers/${id}`, {
       method: "PATCH",
       body: JSON.stringify(input),

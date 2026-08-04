@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAddServer, useEditServer } from "@/hooks/useServers";
-import type { ServerConfig, ServerType } from "@/lib/types";
+import type { AddServerInput, ServerConfig, ServerType } from "@/lib/types";
 
 function parseArgs(raw: string): string[] {
   return raw
@@ -68,6 +68,8 @@ export function AddServerDialog({
   const [pkg, setPkg] = useState("");
   const [args, setArgs] = useState("");
   const [env, setEnv] = useState("");
+  const [initialArgs, setInitialArgs] = useState("");
+  const [initialEnv, setInitialEnv] = useState("");
   const addServer = useAddServer();
   const editServer = useEditServer();
   const mutation = controlled ? editServer : addServer;
@@ -78,16 +80,23 @@ export function AddServerDialog({
     setName(server?.name ?? "");
     setType(server?.type ?? "pypi");
     setPkg(server?.package ?? "");
-    setArgs(server ? formatArgs(server.args) : "");
-    setEnv(server ? formatEnv(server.env) : "");
+    const argsStr = server ? formatArgs(server.args) : "";
+    const envStr = server ? formatEnv(server.env) : "";
+    setArgs(argsStr);
+    setEnv(envStr);
+    setInitialArgs(argsStr);
+    setInitialEnv(envStr);
   }, [open, server]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    const payload = { name, type, package: pkg, args: parseArgs(args), env: parseEnv(env) };
     if (controlled && server) {
+      const payload: Partial<AddServerInput> = { name, type, package: pkg };
+      if (args !== initialArgs) payload.args = parseArgs(args);
+      if (env !== initialEnv) payload.env = parseEnv(env);
       await editServer.mutateAsync({ id: server.id, input: payload });
     } else {
+      const payload = { name, type, package: pkg, args: parseArgs(args), env: parseEnv(env) };
       await addServer.mutateAsync(payload);
     }
     setOpen(false);

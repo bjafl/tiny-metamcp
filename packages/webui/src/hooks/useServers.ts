@@ -23,7 +23,7 @@ export function useAddServer() {
 export function useEditServer() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, input }: { id: number; input: AddServerInput }) =>
+    mutationFn: ({ id, input }: { id: number; input: Partial<AddServerInput> }) =>
       api.editServer(id, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: serversKey }),
   });
