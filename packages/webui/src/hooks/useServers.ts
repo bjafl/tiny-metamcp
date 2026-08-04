@@ -20,6 +20,15 @@ export function useAddServer() {
   });
 }
 
+export function useEditServer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: number; input: AddServerInput }) =>
+      api.editServer(id, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: serversKey }),
+  });
+}
+
 export function useDeleteServer() {
   const qc = useQueryClient();
   return useMutation({

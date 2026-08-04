@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Dialog,
@@ -18,8 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useAddServer } from "@/hooks/useServers";
-import type { ServerType } from "@/lib/types";
+import { useAddServer, useEditServer } from "@/hooks/useServers";
+import type { ServerConfig, ServerType } from "@/lib/types";
 
 function parseArgs(raw: string): string[] {
   return raw
@@ -37,39 +37,77 @@ function parseEnv(raw: string): Record<string, string> {
   return env;
 }
 
-export function AddServerDialog() {
-  const [open, setOpen] = useState(false);
+function formatArgs(args: string[]): string {
+  return args.join(", ");
+}
+
+function formatEnv(env: Record<string, string>): string {
+  return Object.entries(env)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(", ");
+}
+
+interface AddServerDialogProps {
+  server?: ServerConfig;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
+export function AddServerDialog({
+  server,
+  open: openProp,
+  onOpenChange,
+}: AddServerDialogProps = {}) {
+  const isEdit = server != null;
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = isEdit ? (openProp ?? false) : internalOpen;
+  const setOpen = isEdit ? (onOpenChange ?? (() => {})) : setInternalOpen;
+
   const [name, setName] = useState("");
   const [type, setType] = useState<ServerType>("pypi");
   const [pkg, setPkg] = useState("");
   const [args, setArgs] = useState("");
   const [env, setEnv] = useState("");
   const addServer = useAddServer();
+  const editServer = useEditServer();
+  const mutation = isEdit ? editServer : addServer;
+
+  useEffect(() => {
+    if (!open) return;
+    setName(server?.name ?? "");
+    setType(server?.type ?? "pypi");
+    setPkg(server?.package ?? "");
+    setArgs(server ? formatArgs(server.args) : "");
+    setEnv(server ? formatEnv(server.env) : "");
+  }, [open, server]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    await addServer.mutateAsync({
-      name,
-      type,
-      package: pkg,
-      args: parseArgs(args),
-      env: parseEnv(env),
-    });
+    const payload = { name, type, package: pkg, args: parseArgs(args), env: parseEnv(env) };
+    if (isEdit && server) {
+      await editServer.mutateAsync({ id: server.id, input: payload });
+    } else {
+      await addServer.mutateAsync(payload);
+    }
     setOpen(false);
-    setName("");
-    setPkg("");
-    setArgs("");
-    setEnv("");
+    if (!isEdit) {
+      setName("");
+      setPkg("");
+      setArgs("");
+      setEnv("");
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button>Add server</Button>
-      </DialogTrigger>
+      {!isEdit ? (
+        <DialogTrigger asChild>
+          <Button>Add server</Button>
+        </DialogTrigger>
+      ) : null}
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add server</DialogTitle>
+          <DialogTitle>{isEdit ? "Edit server" : "Add server"}</DialogTitle>
         </DialogHeader>
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div className="grid grid-cols-2 gap-4">
@@ -124,17 +162,23 @@ export function AddServerDialog() {
               already-running server, nothing gets launched locally.
             </p>
           ) : null}
-          {addServer.isError ? (
-            <p className="text-sm text-destructive">{addServer.error.message}</p>
+          {mutation.isError ? (
+            <p className="text-sm text-destructive">{mutation.error.message}</p>
           ) : null}
-          {addServer.data?.error ? (
+          {mutation.data?.error ? (
             <p className="text-sm text-destructive">
-              Started with error: {addServer.data.error}
+              Started with error: {mutation.data.error}
             </p>
           ) : null}
           <DialogFooter>
-            <Button type="submit" disabled={addServer.isPending}>
-              {addServer.isPending ? "Installing…" : "Add server"}
+            <Button type="submit" disabled={mutation.isPending}>
+              {mutation.isPending
+                ? isEdit
+                  ? "Saving…"
+                  : "Installing…"
+                : isEdit
+                  ? "Save changes"
+                  : "Add server"}
             </Button>
           </DialogFooter>
         </form>

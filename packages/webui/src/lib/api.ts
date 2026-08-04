@@ -44,6 +44,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  editServer: (id: number, input: AddServerInput) =>
+    request<ServerConfig>(`/api/servers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
   deleteServer: (id: number) =>
     request<{ deleted: number }>(`/api/servers/${id}`, { method: "DELETE" }),
   enableServer: (id: number) =>
