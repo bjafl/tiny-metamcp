@@ -93,3 +93,55 @@ async def test_add_server_with_invalid_type_raises_value_error():
             "add_server",
             {"name": "x", "type": "not-a-real-type", "package": "y"},
         )
+
+
+async def test_edit_server_updates_only_provided_fields(proxy_target_url):
+    name = "meta-edit-partial"
+    try:
+        await meta_tools.call(
+            "add_server",
+            {"name": name, "type": "proxy", "package": proxy_target_url, "env": {"A": "1"}},
+        )
+        edited = _payload(await meta_tools.call("edit_server", {"name": name, "env": {"B": "2"}}))
+        assert edited["error"] is None
+        assert edited["server"]["package"] == proxy_target_url
+        assert edited["server"]["env"] == {"B": "***"}
+    finally:
+        await _cleanup_by_name(name)
+
+
+async def test_edit_server_rename_moves_child_manager_key(proxy_target_url):
+    old_name, new_name = "meta-edit-rename-old", "meta-edit-rename-new"
+    try:
+        await meta_tools.call(
+            "add_server", {"name": old_name, "type": "proxy", "package": proxy_target_url}
+        )
+        assert child_manager.get(old_name) is not None
+
+        edited = _payload(
+            await meta_tools.call("edit_server", {"name": old_name, "new_name": new_name})
+        )
+        assert edited["server"]["name"] == new_name
+        assert set(edited["tools"]) == {"echo", "add"}
+        assert child_manager.get(old_name) is None
+        assert child_manager.get(new_name) is not None
+    finally:
+        await _cleanup_by_name(old_name)
+        await _cleanup_by_name(new_name)
+
+
+async def test_edit_server_unknown_name_raises_value_error():
+    with pytest.raises(ValueError, match="No server named"):
+        await meta_tools.call("edit_server", {"name": "does-not-exist", "package": "x"})
+
+
+async def test_edit_server_invalid_type_raises_value_error(proxy_target_url):
+    name = "meta-edit-bad-type"
+    try:
+        await meta_tools.call(
+            "add_server", {"name": name, "type": "proxy", "package": proxy_target_url}
+        )
+        with pytest.raises(ValueError):
+            await meta_tools.call("edit_server", {"name": name, "type": "not-a-real-type"})
+    finally:
+        await _cleanup_by_name(name)

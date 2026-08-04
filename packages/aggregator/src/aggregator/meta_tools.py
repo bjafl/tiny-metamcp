@@ -76,6 +76,39 @@ async def _add_server(arguments: dict) -> dict:
     return {"server": _cfg(config), "tools": tools, "error": error}
 
 
+async def _edit_server(arguments: dict) -> dict:
+    name = arguments["name"]
+    server = await _find_by_name(name)
+
+    type_str = arguments.get("type")
+    server_type = ServerType(type_str) if type_str is not None else None  # raises ValueError
+
+    was_running = child_manager.get(server.name) is not None
+    try:
+        config = await database.update_server(
+            server.id,
+            name=arguments.get("new_name"),
+            server_type=server_type,
+            package=arguments.get("package"),
+            args=arguments.get("args"),
+            env=arguments.get("env"),
+        )
+    except Exception as exc:
+        raise ValueError(str(exc)) from exc
+
+    if was_running:
+        await child_manager.remove(server.name)
+
+    if not config.enabled:
+        return {"server": _cfg(config), "tools": [], "error": None}
+
+    try:
+        state = await child_manager.add(config)
+        return {"server": _cfg(config), "tools": [t.name for t in state.tools], "error": None}
+    except Exception as exc:
+        return {"server": _cfg(config), "tools": [], "error": str(exc)}
+
+
 async def _delete_server(arguments: dict) -> dict:
     name = arguments["name"]
     server = await _find_by_name(name)
@@ -147,6 +180,25 @@ TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
+        name="edit_server",
+        description=(
+            "Edit an existing MCP server's configuration. Identify the server "
+            "with 'name'; only the other fields you provide are changed."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Current name of the server to edit"},
+                "new_name": {"type": "string", "description": "New name, if renaming"},
+                "type": {"type": "string"},
+                "package": {"type": "string"},
+                "args": {"type": "array", "items": {"type": "string"}},
+                "env": {"type": "object", "additionalProperties": {"type": "string"}},
+            },
+            "required": ["name"],
+        },
+    ),
+    types.Tool(
         name="delete_server",
         description="Stop and permanently remove a configured MCP server.",
         inputSchema=_NAME_ONLY_SCHEMA,
@@ -173,6 +225,7 @@ NAMES: frozenset[str] = frozenset(t.name for t in TOOLS)
 _HANDLERS = {
     "list_servers": _list_servers,
     "add_server": _add_server,
+    "edit_server": _edit_server,
     "delete_server": _delete_server,
     "enable_server": _enable_server,
     "disable_server": _disable_server,
