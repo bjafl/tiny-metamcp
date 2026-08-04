@@ -11,6 +11,7 @@ from ..database import (
     delete_server,
     get_server,
     list_servers,
+    update_server,
     update_server_enabled,
 )
 from ..installer import uninstall
@@ -28,6 +29,14 @@ class AddServerRequest(BaseModel):
     package: str
     args: list[str] = []
     env: dict[str, str] = {}
+
+
+class ServerUpdateRequest(BaseModel):
+    name: str | None = None
+    type: ServerType | None = None
+    package: str | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
 
 
 @router.get("/servers")
@@ -61,6 +70,38 @@ async def api_add_server(req: AddServerRequest):
         return {"server": _cfg(config), "tools": tools, "error": str(exc)}
 
     return {"server": _cfg(config), "tools": tools}
+
+
+@router.patch("/servers/{server_id}")
+async def api_update_server(server_id: int, req: ServerUpdateRequest):
+    existing = await get_server(server_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    was_running = child_manager.get(existing.name) is not None
+    try:
+        config = await update_server(
+            server_id,
+            name=req.name,
+            server_type=req.type,
+            package=req.package,
+            args=req.args,
+            env=req.env,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if was_running:
+        await child_manager.remove(existing.name)
+
+    if not config.enabled:
+        return {**_cfg(config), "running": False, "tool_count": 0, "error": None}
+
+    try:
+        state = await child_manager.add(config)
+        return {**_cfg(config), "running": True, "tool_count": len(state.tools), "error": None}
+    except Exception as exc:
+        return {**_cfg(config), "running": False, "tool_count": 0, "error": str(exc)}
 
 
 @router.delete("/servers/{server_id}")
