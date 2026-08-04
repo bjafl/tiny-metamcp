@@ -95,13 +95,33 @@ async def _edit_server(arguments: dict) -> dict:
         )
     except Exception as exc:
         raise ValueError(str(exc)) from exc
+    if config is None:
+        raise ValueError(f"No server named {name!r}")
 
-    if was_running:
+    nothing_changed = (
+        server.name == config.name
+        and server.type == config.type
+        and server.package == config.package
+        and server.args == config.args
+        and server.env == config.env
+    )
+    if nothing_changed:
+        # A no-op edit shouldn't cycle a running child -- report its
+        # current state as-is instead of restarting it for nothing.
+        state = child_manager.get(config.name)
+        return {
+            "server": _cfg(config),
+            "tools": [t.name for t in state.tools] if state else [],
+            "error": state.error if state else None,
+        }
+
+    renamed = server.name != config.name
+    if was_running and (renamed or not config.enabled):
+        # See routers.py's api_update_server for why this is conditional
+        # on renamed/disabled rather than unconditional on was_running.
         await child_manager.remove(server.name)
 
-    identity_changed = (
-        server.name != config.name or server.type != config.type or server.package != config.package
-    )
+    identity_changed = renamed or server.type != config.type or server.package != config.package
     if server.type == ServerType.GIT.value and identity_changed:
         await uninstall(server)
 
@@ -196,7 +216,7 @@ TOOLS: list[types.Tool] = [
             "properties": {
                 "name": {"type": "string", "description": "Current name of the server to edit"},
                 "new_name": {"type": "string", "description": "New name, if renaming"},
-                "type": {"type": "string"},
+                "type": {"type": "string", "enum": [t.value for t in ServerType]},
                 "package": {"type": "string"},
                 "args": {"type": "array", "items": {"type": "string"}},
                 "env": {"type": "object", "additionalProperties": {"type": "string"}},

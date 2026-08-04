@@ -90,15 +90,38 @@ async def api_update_server(server_id: int, req: ServerUpdateRequest):
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if config is None:
+        raise HTTPException(status_code=404, detail="Server not found")
 
-    if was_running:
+    nothing_changed = (
+        existing.name == config.name
+        and existing.type == config.type
+        and existing.package == config.package
+        and existing.args == config.args
+        and existing.env == config.env
+    )
+    if nothing_changed:
+        # A no-op edit shouldn't cycle a running child -- report its
+        # current state as-is instead of restarting it for nothing.
+        state = child_manager.get(config.name)
+        return {
+            **_cfg(config),
+            "running": state.running if state else False,
+            "tool_count": len(state.tools) if state else 0,
+            "error": state.error if state else None,
+        }
+
+    renamed = existing.name != config.name
+    if was_running and (renamed or not config.enabled):
+        # A rename must evict the OLD child_manager key explicitly -- add()
+        # below only ever (re)keys under the NEW name. When the name is
+        # unchanged, skip this and let add() do its own atomic
+        # stop-then-start under a single lock instead of two separate
+        # acquisitions, which would otherwise reopen a race window for a
+        # concurrent operation on the same name to land in between.
         await child_manager.remove(existing.name)
 
-    identity_changed = (
-        existing.name != config.name
-        or existing.type != config.type
-        or existing.package != config.package
-    )
+    identity_changed = renamed or existing.type != config.type or existing.package != config.package
     if existing.type == ServerType.GIT.value and identity_changed:
         await uninstall(existing)
 

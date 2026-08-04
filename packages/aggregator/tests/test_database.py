@@ -4,7 +4,6 @@ update used by both PATCH /servers/{id} and the edit_server meta-tool.
 """
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 
 from aggregator.database import add_server, delete_server, update_server
 from aggregator.models import ServerType
@@ -64,7 +63,7 @@ async def test_update_server_rename_to_existing_name_raises():
     a = await add_server("edit-db-conflict-a", ServerType.PROXY, "http://a.invalid/mcp")
     b = await add_server("edit-db-conflict-b", ServerType.PROXY, "http://b.invalid/mcp")
     try:
-        with pytest.raises(IntegrityError):
+        with pytest.raises(ValueError, match="edit-db-conflict-a"):
             await update_server(b.id, name="edit-db-conflict-a")
     finally:
         await _cleanup(a.id)

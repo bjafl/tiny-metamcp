@@ -1,5 +1,6 @@
 import json
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
@@ -74,23 +75,34 @@ async def update_server(
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
 ) -> Server | None:
-    async with _session_factory() as session:
-        server = await session.get(Server, server_id)
-        if not server:
-            return None
-        if name is not None:
-            server.name = name
-        if server_type is not None:
-            server.type = server_type.value if isinstance(server_type, ServerType) else server_type
-        if package is not None:
-            server.package = package
-        if args is not None:
-            server.args = json.dumps(args)
-        if env is not None:
-            server.env = json.dumps(env)
-        await session.commit()
-        await session.refresh(server)
-        return server
+    try:
+        async with _session_factory() as session:
+            server = await session.get(Server, server_id)
+            if not server:
+                return None
+            if name is not None:
+                server.name = name
+            if server_type is not None:
+                server.type = (
+                    server_type.value if isinstance(server_type, ServerType) else server_type
+                )
+            if package is not None:
+                server.package = package
+            if args is not None:
+                server.args = json.dumps(args)
+            if env is not None:
+                server.env = json.dumps(env)
+            await session.commit()
+            await session.refresh(server)
+            return server
+    except IntegrityError as exc:
+        # The unique constraint on Server.name is the only one that can
+        # fail here -- letting the async-with block's own __aexit__ close
+        # the session before we convert the error keeps SQLAlchemy's
+        # rollback/close bookkeeping on its normal path (an explicit
+        # session.rollback() from inside the except, still nested in the
+        # async-with, corrupted the session's greenlet bridging).
+        raise ValueError(f"A server named {name!r} already exists") from exc
 
 
 async def delete_server(server_id: int) -> None:
