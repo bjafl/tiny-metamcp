@@ -66,6 +66,33 @@ async def update_server_enabled(server_id: int, enabled: bool) -> None:
             await session.commit()
 
 
+async def update_server(
+    server_id: int,
+    name: str | None = None,
+    server_type: ServerType | None = None,
+    package: str | None = None,
+    args: list[str] | None = None,
+    env: dict[str, str] | None = None,
+) -> Server | None:
+    async with _session_factory() as session:
+        server = await session.get(Server, server_id)
+        if not server:
+            return None
+        if name is not None:
+            server.name = name
+        if server_type is not None:
+            server.type = server_type.value if isinstance(server_type, ServerType) else server_type
+        if package is not None:
+            server.package = package
+        if args is not None:
+            server.args = json.dumps(args)
+        if env is not None:
+            server.env = json.dumps(env)
+        await session.commit()
+        await session.refresh(server)
+        return server
+
+
 async def delete_server(server_id: int) -> None:
     async with _session_factory() as session:
         server = await session.get(Server, server_id)
