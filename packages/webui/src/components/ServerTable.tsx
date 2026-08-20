@@ -8,6 +8,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { StatusBadge } from "@/components/StatusBadge";
 import { AddServerDialog } from "@/components/AddServerDialog";
 import {
@@ -15,14 +23,18 @@ import {
   useDisableServer,
   useEnableServer,
   useRestartServer,
+  useEditServer,
 } from "@/hooks/useServers";
-import type { ServerConfig } from "@/lib/types";
+import { useMe } from "@/hooks/useMe";
+import type { ServerConfig, ServerVisibility } from "@/lib/types";
 
 export function ServerTable({ servers }: { servers: ServerConfig[] }) {
+  const { data: me } = useMe();
   const enableServer = useEnableServer();
   const disableServer = useDisableServer();
   const restartServer = useRestartServer();
   const deleteServer = useDeleteServer();
+  const editServer = useEditServer();
   const [editingServer, setEditingServer] = useState<ServerConfig | null>(null);
   // Holds the most recently edited server and is never reset to null once
   // set, unlike `editingServer` -- AddServerDialog's props require `server`
@@ -39,6 +51,8 @@ export function ServerTable({ servers }: { servers: ServerConfig[] }) {
             <TableHead>Name</TableHead>
             <TableHead>Type</TableHead>
             <TableHead>Package</TableHead>
+            <TableHead>Owner</TableHead>
+            <TableHead>Visibility</TableHead>
             <TableHead>Status</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
@@ -49,6 +63,32 @@ export function ServerTable({ servers }: { servers: ServerConfig[] }) {
               <TableCell className="font-medium">{s.name}</TableCell>
               <TableCell>{s.type}</TableCell>
               <TableCell className="max-w-xs truncate">{s.package}</TableCell>
+              <TableCell className="text-muted-foreground">{s.owner ?? "—"}</TableCell>
+              <TableCell>
+                {me?.is_admin ? (
+                  <Select
+                    value={s.visibility}
+                    onValueChange={(v) =>
+                      editServer.mutate({
+                        id: s.id,
+                        input: { visibility: v as ServerVisibility },
+                      })
+                    }
+                  >
+                    <SelectTrigger size="sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="private">Private</SelectItem>
+                      <SelectItem value="everyone">Everyone</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Badge variant={s.visibility === "everyone" ? "outline" : "secondary"}>
+                    {s.visibility === "everyone" ? "Everyone" : "Private"}
+                  </Badge>
+                )}
+              </TableCell>
               <TableCell>
                 <StatusBadge server={s} />
                 {s.error ? (
