@@ -9,7 +9,6 @@ if [ -f .env ]; then
     [[ "${confirm,,}" == "y" ]] || { echo "Aborted."; exit 0; }
 fi
 
-ADMIN_TOKEN=$(openssl rand -hex 32)
 SESSION_SECRET=$(openssl rand -base64 32 | tr -d '\n')
 
 if $INTERACTIVE; then
@@ -18,6 +17,7 @@ if $INTERACTIVE; then
     read -rp "GitHub Client ID: "                        GITHUB_CLIENT_ID
     read -rp "GitHub Client Secret: "                    GITHUB_CLIENT_SECRET
     read -rp "GitHub username(s) [comma-separated]: "    GITHUB_ALLOWED_USERS
+    read -rp "Admin GitHub username(s) [comma-separated, optional]: " ADMIN_USERS
     read -rp "Log level [INFO]: "                        LOG_LEVEL_INPUT
     LOG_LEVEL="${LOG_LEVEL_INPUT:-INFO}"
     echo ""
@@ -26,6 +26,7 @@ else
     GITHUB_CLIENT_ID="CHANGE_ME"
     GITHUB_CLIENT_SECRET="CHANGE_ME"
     GITHUB_ALLOWED_USERS="CHANGE_ME"
+    ADMIN_USERS=""
     LOG_LEVEL="INFO"
 fi
 
@@ -38,9 +39,6 @@ cat > .env << ENVEOF
 MCP_DOMAIN=${MCP_DOMAIN}
 
 # ── Secret keys (auto-generated) ─────────────────────────────────────────────
-# Static bearer token for MCP clients (Claude Desktop etc.) — optional if OAuth only.
-ADMIN_TOKEN=${ADMIN_TOKEN}
-
 # Signing key for admin session cookies.
 SESSION_SECRET=${SESSION_SECRET}
 
@@ -54,6 +52,11 @@ GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
 
 # Comma-separated list of allowed GitHub usernames. Do NOT leave empty.
 GITHUB_ALLOWED_USERS=${GITHUB_ALLOWED_USERS}
+
+# Comma-separated subset of GITHUB_ALLOWED_USERS with admin rights (see
+# and manage every server, override visibility). Optional — leave empty
+# for no admins.
+ADMIN_USERS=${ADMIN_USERS}
 
 # ── Optional ──────────────────────────────────────────────────────────────────
 LOG_LEVEL=${LOG_LEVEL}

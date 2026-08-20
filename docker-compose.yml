@@ -9,7 +9,7 @@ services:
     environment:
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       DATA_DIR: "/data"
-      ADMIN_TOKEN: "${ADMIN_TOKEN}"
+      ADMIN_USERS: "${ADMIN_USERS}"
       SESSION_SECRET: "${SESSION_SECRET}"
       MCP_DOMAIN: "${MCP_DOMAIN}"
       GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID}"

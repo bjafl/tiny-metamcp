@@ -8,7 +8,7 @@ Inspired by [MetaMCP](https://github.com/metatool-ai/metatool-app).
 
 ```
 MCP Client (Claude Web UI, Claude Desktop, etc.)
-        │  OAuth 2.1 + PKCE  OR  Bearer ADMIN_TOKEN
+        │  OAuth 2.1 + PKCE  OR  Bearer <personal token>
         ▼
    Traefik (Coolify) — TLS / Let's Encrypt
         │
@@ -26,7 +26,7 @@ MCP Client (Claude Web UI, Claude Desktop, etc.)
 
 **Auth model:**
 - **Browser → `/admin`, `/api`** — GitHub OAuth via signed session cookies. Only usernames in `GITHUB_ALLOWED_USERS` are allowed in.
-- **MCP client → `/mcp`** — OAuth 2.1 + PKCE (Claude Web UI connectors) or static `ADMIN_TOKEN` bearer token (Claude Desktop etc.).
+- **MCP client → `/mcp`** — OAuth 2.1 + PKCE (Claude Web UI connectors) or a personal API token (Claude Desktop etc. — generate one from the webui's Account page after logging in).
 - **Claude Web UI** — Full OAuth 2.1 flow: discovery → dynamic client registration → PKCE authorize → GitHub login → token exchange. No manual token needed.
 
 ## Prerequisites
@@ -86,8 +86,10 @@ just up
 just ps
 just health
 
-# 2. MCP bearer token access
-TOKEN=$(grep ^ADMIN_TOKEN .env | cut -d= -f2)
+# 2. MCP bearer token access — generate a personal token first: log into
+#    the webui at http://localhost:8000/admin, open "Account", click
+#    "Generate token", then:
+TOKEN=<paste the generated token>
 curl -sI http://localhost:8000/mcp                                       # → 401
 curl -H "Authorization: Bearer $TOKEN" --max-time 2 http://localhost:8000/mcp  # → SSE stream
 
@@ -96,7 +98,7 @@ curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/servers | p
 
 # 4. Full MCP protocol test
 npx @modelcontextprotocol/inspector
-# URL: http://localhost:8000/mcp  |  Header: Authorization: Bearer <ADMIN_TOKEN>
+# URL: http://localhost:8000/mcp  |  Header: Authorization: Bearer <your personal token>
 ```
 
 ---
@@ -125,7 +127,7 @@ npx @modelcontextprotocol/inspector
     "tiny-metamcp": {
       "url": "https://<MCP_DOMAIN>/mcp",
       "headers": {
-        "Authorization": "Bearer <ADMIN_TOKEN>"
+        "Authorization": "Bearer <your personal token>"
       }
     }
   }
@@ -143,23 +145,29 @@ Go to `https://<MCP_DOMAIN>/admin` — sign in with GitHub. From here you can:
 - **MCP Servers** — add, edit, enable/disable, restart, and delete servers
 - **Logs** — view aggregator logs and child process stderr in real time (live SSE stream)
 - **Tool Tester** — select a running server and tool, fill in JSON arguments, and call it directly
+- **Account** — view your username/admin status, generate a personal API token for MCP clients (Claude Desktop etc.)
 
 ### REST API
 
-All API endpoints require authentication: either a valid admin session cookie (browser) or `Authorization: Bearer <ADMIN_TOKEN>`.
+All API endpoints require authentication: either a valid admin session cookie (browser) or `Authorization: Bearer <personal token>`.
 
 ```bash
 BASE=https://<MCP_DOMAIN>
-TOKEN=<ADMIN_TOKEN>
+TOKEN=<your personal token>
 
 # List servers
 curl -H "Authorization: Bearer $TOKEN" $BASE/api/servers | jq
+
+# Generate/regenerate your personal token (requires an active browser
+# session — cannot be done with a bearer token, only from a logged-in
+# webui session)
+curl -X POST -H "Authorization: Bearer $TOKEN" $BASE/api/me/token
 
 # Add a server
 curl -X POST $BASE/api/servers \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"<name>","type":"pypi|npm|git|cmd|proxy","package":"<package>","args":[],"env":{}}'
+  -d '{"name":"<name>","type":"pypi|npm|git|cmd|proxy","package":"<package>","args":[],"env":{},"visibility":"private|everyone"}'
 
 # Edit a server (partial update — only send the fields you want to change)
 curl -X PATCH $BASE/api/servers/<id> \
@@ -205,8 +213,8 @@ Beyond the REST API and web UI, the server registry can also be managed as **pla
 | Tool | Arguments | Description |
 |------|-----------|-------------|
 | `list_servers` | — | List all configured servers with status |
-| `add_server` | `name`, `type`, `package`, `args?`, `env?` | Add and start a new server |
-| `edit_server` | `name`, `new_name?`, `type?`, `package?`, `args?`, `env?` | Edit an existing server's configuration (`name` identifies the server; only the other fields you provide are changed) |
+| `add_server` | `name`, `type`, `package`, `args?`, `env?`, `visibility?` | Add and start a new server |
+| `edit_server` | `name`, `new_name?`, `type?`, `package?`, `args?`, `env?`, `visibility?` | Edit an existing server's configuration (`name` identifies the server; only the other fields you provide are changed) |
 | `delete_server` | `name` | Stop and permanently remove a server |
 | `enable_server` | `name` | Enable and start a disabled server |
 | `disable_server` | `name` | Stop and disable a server without deleting it |
@@ -214,7 +222,15 @@ Beyond the REST API and web UI, the server registry can also be managed as **pla
 
 These tools are unprefixed — proxied tools are always namespaced `<server>__<tool>`, so there's no collision surface.
 
-> **Access model:** anything that can reach `/mcp` can fully manage the server registry (add/remove/enable/disable/restart any server) — the same access level as the REST API, just reachable from inside an MCP conversation instead of a separate HTTP call. `env` values returned by `list_servers` are redacted (`***`); variable names are visible but not their values, since this output can land in an LLM's conversation history rather than staying on the admin-only REST/web UI surface.
+> **Access model:** each server has an owner (whoever added it) and a
+> visibility (`everyone` or `private`). A caller can see and use
+> (`list_servers`, tool calls) any `everyone`-visibility server plus
+> their own `private` ones. Only the owner or an admin (`ADMIN_USERS`)
+> can manage a server (`edit_server`/`delete_server`/`enable_server`/
+> `disable_server`/`restart_server`). `env` values returned by
+> `list_servers` are redacted (`***`); variable names are visible but
+> not their values, since this output can land in an LLM's conversation
+> history rather than staying on the admin-only REST/web UI surface.
 
 ---
 
@@ -410,11 +426,11 @@ curl -X POST $BASE/api/servers \
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `MCP_DOMAIN` | ✅ | Public hostname (without `https://`) |
-| `ADMIN_TOKEN` | — | Static bearer token for MCP clients. Generate: `openssl rand -hex 32` |
 | `SESSION_SECRET` | ✅ | Signing key for admin session cookies. Generate: `openssl rand -base64 32` |
 | `GITHUB_CLIENT_ID` | ✅ | GitHub OAuth App Client ID |
 | `GITHUB_CLIENT_SECRET` | ✅ | GitHub OAuth App Client Secret |
 | `GITHUB_ALLOWED_USERS` | ✅ | Comma-separated list of allowed GitHub usernames |
+| `ADMIN_USERS` | — | Comma-separated GitHub usernames with admin rights (see all servers, manage any server, override visibility). Should be a subset of `GITHUB_ALLOWED_USERS`. |
 | `LOG_LEVEL` | — | `DEBUG` / `INFO` / `WARNING` / `ERROR` (default: `INFO`) |
 
 ---
