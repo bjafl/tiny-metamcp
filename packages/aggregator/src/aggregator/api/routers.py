@@ -3,7 +3,7 @@ import json as _json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import log_capture
+from .. import access_control, log_capture
 from ..admin_auth import require_api_auth
 from ..child_manager import child_manager
 from ..database import (
@@ -15,7 +15,7 @@ from ..database import (
     update_server_enabled,
 )
 from ..installer import uninstall
-from ..models import Server, ServerType
+from ..models import Server, ServerType, ServerVisibility
 
 router = APIRouter(dependencies=[Depends(require_api_auth)])
 
@@ -29,6 +29,7 @@ class AddServerRequest(BaseModel):
     package: str
     args: list[str] = []
     env: dict[str, str] = {}
+    visibility: ServerVisibility = ServerVisibility.PRIVATE
 
 
 class ServerUpdateRequest(BaseModel):
@@ -37,11 +38,12 @@ class ServerUpdateRequest(BaseModel):
     package: str | None = None
     args: list[str] | None = None
     env: dict[str, str] | None = None
+    visibility: ServerVisibility | None = None
 
 
 @router.get("/servers")
-async def api_list_servers():
-    servers = await list_servers()
+async def api_list_servers(username: str = Depends(require_api_auth)):
+    servers = await access_control.visible_servers(username)
     running = {s["name"]: s for s in child_manager.status()}
     return [
         {
@@ -55,9 +57,17 @@ async def api_list_servers():
 
 
 @router.post("/servers", status_code=201)
-async def api_add_server(req: AddServerRequest):
+async def api_add_server(req: AddServerRequest, username: str = Depends(require_api_auth)):
     try:
-        config = await add_server(req.name, req.type, req.package, req.args, req.env)
+        config = await add_server(
+            req.name,
+            req.type,
+            req.package,
+            req.args,
+            req.env,
+            owner_username=username,
+            visibility=req.visibility.value,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -65,7 +75,6 @@ async def api_add_server(req: AddServerRequest):
         state = await child_manager.add(config)
         tools = [t.name for t in state.tools]
     except Exception as exc:
-        # Saved to DB but failed to start – surface the error
         tools = []
         return {"server": _cfg(config), "tools": tools, "error": str(exc)}
 
@@ -73,9 +82,11 @@ async def api_add_server(req: AddServerRequest):
 
 
 @router.patch("/servers/{server_id}")
-async def api_update_server(server_id: int, req: ServerUpdateRequest):
+async def api_update_server(
+    server_id: int, req: ServerUpdateRequest, username: str = Depends(require_api_auth)
+):
     existing = await get_server(server_id)
-    if not existing:
+    if not existing or not access_control.can_manage(existing, username):
         raise HTTPException(status_code=404, detail="Server not found")
 
     was_running = child_manager.get(existing.name) is not None
@@ -87,6 +98,7 @@ async def api_update_server(server_id: int, req: ServerUpdateRequest):
             package=req.package,
             args=req.args,
             env=req.env,
+            visibility=req.visibility.value if req.visibility is not None else None,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -101,8 +113,6 @@ async def api_update_server(server_id: int, req: ServerUpdateRequest):
         and existing.env == config.env
     )
     if nothing_changed:
-        # A no-op edit shouldn't cycle a running child -- report its
-        # current state as-is instead of restarting it for nothing.
         state = child_manager.get(config.name)
         return {
             **_cfg(config),
@@ -113,12 +123,6 @@ async def api_update_server(server_id: int, req: ServerUpdateRequest):
 
     renamed = existing.name != config.name
     if was_running and (renamed or not config.enabled):
-        # A rename must evict the OLD child_manager key explicitly -- add()
-        # below only ever (re)keys under the NEW name. When the name is
-        # unchanged, skip this and let add() do its own atomic
-        # stop-then-start under a single lock instead of two separate
-        # acquisitions, which would otherwise reopen a race window for a
-        # concurrent operation on the same name to land in between.
         await child_manager.remove(existing.name)
 
     identity_changed = renamed or existing.type != config.type or existing.package != config.package
@@ -136,9 +140,9 @@ async def api_update_server(server_id: int, req: ServerUpdateRequest):
 
 
 @router.delete("/servers/{server_id}")
-async def api_delete_server(server_id: int):
+async def api_delete_server(server_id: int, username: str = Depends(require_api_auth)):
     config = await get_server(server_id)
-    if not config:
+    if not config or not access_control.can_manage(config, username):
         raise HTTPException(status_code=404, detail="Server not found")
     await child_manager.remove(config.name)
     await uninstall(config)
@@ -147,9 +151,9 @@ async def api_delete_server(server_id: int):
 
 
 @router.post("/servers/{server_id}/enable")
-async def api_enable_server(server_id: int):
+async def api_enable_server(server_id: int, username: str = Depends(require_api_auth)):
     config = await get_server(server_id)
-    if not config:
+    if not config or not access_control.can_manage(config, username):
         raise HTTPException(status_code=404, detail="Server not found")
     await update_server_enabled(server_id, True)
     config.enabled = True
@@ -161,9 +165,9 @@ async def api_enable_server(server_id: int):
 
 
 @router.post("/servers/{server_id}/disable")
-async def api_disable_server(server_id: int):
+async def api_disable_server(server_id: int, username: str = Depends(require_api_auth)):
     config = await get_server(server_id)
-    if not config:
+    if not config or not access_control.can_manage(config, username):
         raise HTTPException(status_code=404, detail="Server not found")
     await child_manager.remove(config.name)
     await update_server_enabled(server_id, False)
@@ -171,9 +175,9 @@ async def api_disable_server(server_id: int):
 
 
 @router.post("/servers/{server_id}/restart")
-async def api_restart_server(server_id: int):
+async def api_restart_server(server_id: int, username: str = Depends(require_api_auth)):
     config = await get_server(server_id)
-    if not config:
+    if not config or not access_control.can_manage(config, username):
         raise HTTPException(status_code=404, detail="Server not found")
     try:
         state = await child_manager.restart(config.name)
@@ -266,4 +270,6 @@ def _cfg(c: Server) -> dict:
         "args": c.get_args(),
         "env": c.get_env(),
         "enabled": c.enabled,
+        "owner": c.owner_username,
+        "visibility": c.visibility,
     }
