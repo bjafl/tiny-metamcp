@@ -8,7 +8,6 @@ per-connection request handled by uvicorn, not a same-task direct call.
 """
 
 import asyncio
-import importlib
 import socket
 import sys
 import time
@@ -117,7 +116,6 @@ async def test_mcp_tool_list_filters_private_servers_per_user(proxy_target_url, 
 
 async def test_mcp_call_tool_rejects_private_server_for_non_owner(proxy_target_url, aggregator_url):
     name = "mcp-integ-call-denied"
-    owner_token = await access_control.generate_personal_token("mcp-integ-call-owner")
     stranger_token = await access_control.generate_personal_token("mcp-integ-call-stranger")
 
     config = await add_server(
