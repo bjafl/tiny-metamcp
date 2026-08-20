@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAddServer, useEditServer } from "@/hooks/useServers";
-import type { AddServerInput, ServerConfig, ServerType } from "@/lib/types";
+import type { AddServerInput, ServerConfig, ServerType, ServerVisibility } from "@/lib/types";
 
 function parseArgs(raw: string): string[] {
   return raw
@@ -67,6 +67,7 @@ export function AddServerDialog({
 
   const [name, setName] = useState("");
   const [type, setType] = useState<ServerType>("pypi");
+  const [visibility, setVisibility] = useState<ServerVisibility>("private");
   const [pkg, setPkg] = useState("");
   const [args, setArgs] = useState("");
   const [env, setEnv] = useState("");
@@ -94,6 +95,7 @@ export function AddServerDialog({
     resetAddServer();
     setName(server?.name ?? "");
     setType(server?.type ?? "pypi");
+    setVisibility(server?.visibility ?? "private");
     setPkg(server?.package ?? "");
     const argsStr = server ? formatArgs(server.args) : "";
     const envStr = server ? formatEnv(server.env) : "";
@@ -106,13 +108,20 @@ export function AddServerDialog({
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (controlled && server) {
-      const payload: Partial<AddServerInput> = { name, type, package: pkg };
+      const payload: Partial<AddServerInput> = { name, type, package: pkg, visibility };
       if (args !== initialArgs) payload.args = parseArgs(args);
       if (env !== initialEnv) payload.env = parseEnv(env);
       const result = await editServer.mutateAsync({ id: server.id, input: payload });
       if (result.error) return;
     } else {
-      const payload = { name, type, package: pkg, args: parseArgs(args), env: parseEnv(env), visibility: "everyone" as const };
+      const payload = {
+        name,
+        type,
+        package: pkg,
+        args: parseArgs(args),
+        env: parseEnv(env),
+        visibility,
+      };
       const result = await addServer.mutateAsync(payload);
       if (result.error) return;
     }
@@ -153,6 +162,21 @@ export function AddServerDialog({
                   <SelectItem value="git">Git repo</SelectItem>
                   <SelectItem value="cmd">Command</SelectItem>
                   <SelectItem value="proxy">Proxy (remote URL)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Visibility</Label>
+              <Select
+                value={visibility}
+                onValueChange={(v) => setVisibility(v as ServerVisibility)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="private">Just me</SelectItem>
+                  <SelectItem value="everyone">Everyone</SelectItem>
                 </SelectContent>
               </Select>
             </div>
