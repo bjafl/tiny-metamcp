@@ -10,10 +10,10 @@ import json
 
 from mcp import types
 
-from . import database
+from . import access_control, database
 from .child_manager import child_manager
 from .installer import uninstall
-from .models import Server, ServerType
+from .models import Server, ServerType, ServerVisibility
 
 
 def _cfg(c: Server) -> dict:
@@ -27,18 +27,20 @@ def _cfg(c: Server) -> dict:
         # context over /mcp, not just the admin-only REST/webui surface.
         "env": dict.fromkeys(c.get_env(), "***"),
         "enabled": c.enabled,
+        "owner": c.owner_username,
+        "visibility": c.visibility,
     }
 
 
-async def _find_by_name(name: str) -> Server:
+async def _find_by_name(name: str, username: str) -> Server:
     for server in await database.list_servers():
-        if server.name == name:
+        if server.name == name and access_control.can_manage(server, username):
             return server
     raise ValueError(f"No server named {name!r}")
 
 
-async def _list_servers(arguments: dict) -> list[dict]:
-    servers = await database.list_servers()
+async def _list_servers(arguments: dict, username: str) -> list[dict]:
+    servers = await access_control.visible_servers(username)
     running = {s["name"]: s for s in child_manager.status()}
     return [
         {
@@ -51,17 +53,27 @@ async def _list_servers(arguments: dict) -> list[dict]:
     ]
 
 
-async def _add_server(arguments: dict) -> dict:
+async def _add_server(arguments: dict, username: str) -> dict:
     name = arguments["name"]
     type_str = arguments["type"]
     package = arguments["package"]
     args = arguments.get("args", [])
     env = arguments.get("env", {})
+    visibility = arguments.get("visibility", ServerVisibility.PRIVATE.value)
 
     server_type = ServerType(type_str)  # raises ValueError for an unknown type
+    ServerVisibility(visibility)  # raises ValueError for an unknown value
 
     try:
-        config = await database.add_server(name, server_type, package, args, env)
+        config = await database.add_server(
+            name,
+            server_type,
+            package,
+            args,
+            env,
+            owner_username=username,
+            visibility=visibility,
+        )
     except Exception as exc:
         raise ValueError(str(exc)) from exc
 
@@ -76,12 +88,15 @@ async def _add_server(arguments: dict) -> dict:
     return {"server": _cfg(config), "tools": tools, "error": error}
 
 
-async def _edit_server(arguments: dict) -> dict:
+async def _edit_server(arguments: dict, username: str) -> dict:
     name = arguments["name"]
-    server = await _find_by_name(name)
+    server = await _find_by_name(name, username)
 
     type_str = arguments.get("type")
     server_type = ServerType(type_str) if type_str is not None else None  # raises ValueError
+    visibility = arguments.get("visibility")
+    if visibility is not None:
+        ServerVisibility(visibility)  # raises ValueError for an unknown value
 
     was_running = child_manager.get(server.name) is not None
     try:
@@ -92,6 +107,7 @@ async def _edit_server(arguments: dict) -> dict:
             package=arguments.get("package"),
             args=arguments.get("args"),
             env=arguments.get("env"),
+            visibility=visibility,
         )
     except Exception as exc:
         raise ValueError(str(exc)) from exc
@@ -107,7 +123,11 @@ async def _edit_server(arguments: dict) -> dict:
     )
     if nothing_changed:
         # A no-op edit shouldn't cycle a running child -- report its
-        # current state as-is instead of restarting it for nothing.
+        # current state as-is instead of restarting it for nothing. A
+        # visibility-only change falls in here too (visibility doesn't
+        # affect the running process): config already carries the new
+        # value from update_server() above, so the returned _cfg(config)
+        # reflects it correctly without a restart.
         state = child_manager.get(config.name)
         return {
             "server": _cfg(config),
@@ -117,8 +137,6 @@ async def _edit_server(arguments: dict) -> dict:
 
     renamed = server.name != config.name
     if was_running and (renamed or not config.enabled):
-        # See routers.py's api_update_server for why this is conditional
-        # on renamed/disabled rather than unconditional on was_running.
         await child_manager.remove(server.name)
 
     identity_changed = renamed or server.type != config.type or server.package != config.package
@@ -135,18 +153,18 @@ async def _edit_server(arguments: dict) -> dict:
         return {"server": _cfg(config), "tools": [], "error": str(exc)}
 
 
-async def _delete_server(arguments: dict) -> dict:
+async def _delete_server(arguments: dict, username: str) -> dict:
     name = arguments["name"]
-    server = await _find_by_name(name)
+    server = await _find_by_name(name, username)
     await child_manager.remove(server.name)
     await uninstall(server)
     await database.delete_server(server.id)
     return {"deleted": name}
 
 
-async def _enable_server(arguments: dict) -> dict:
+async def _enable_server(arguments: dict, username: str) -> dict:
     name = arguments["name"]
-    server = await _find_by_name(name)
+    server = await _find_by_name(name, username)
     await database.update_server_enabled(server.id, True)
     server.enabled = True
     try:
@@ -156,17 +174,17 @@ async def _enable_server(arguments: dict) -> dict:
         return {"name": name, "enabled": True, "tool_count": 0, "error": str(exc)}
 
 
-async def _disable_server(arguments: dict) -> dict:
+async def _disable_server(arguments: dict, username: str) -> dict:
     name = arguments["name"]
-    server = await _find_by_name(name)
+    server = await _find_by_name(name, username)
     await child_manager.remove(server.name)
     await database.update_server_enabled(server.id, False)
     return {"name": name, "enabled": False}
 
 
-async def _restart_server(arguments: dict) -> dict:
+async def _restart_server(arguments: dict, username: str) -> dict:
     name = arguments["name"]
-    await _find_by_name(name)  # validates existence with a clear error first
+    await _find_by_name(name, username)  # validates access with a clear error first
     try:
         state = await child_manager.restart(name)
     except KeyError as exc:
@@ -201,6 +219,12 @@ TOOLS: list[types.Tool] = [
                     "additionalProperties": {"type": "string"},
                     "default": {},
                 },
+                "visibility": {
+                    "type": "string",
+                    "enum": [v.value for v in ServerVisibility],
+                    "default": ServerVisibility.PRIVATE.value,
+                    "description": "Who can see/use this server: 'everyone' or 'private' (only you and admins).",
+                },
             },
             "required": ["name", "type", "package"],
         },
@@ -220,6 +244,7 @@ TOOLS: list[types.Tool] = [
                 "package": {"type": "string"},
                 "args": {"type": "array", "items": {"type": "string"}},
                 "env": {"type": "object", "additionalProperties": {"type": "string"}},
+                "visibility": {"type": "string", "enum": [v.value for v in ServerVisibility]},
             },
             "required": ["name"],
         },
@@ -259,6 +284,6 @@ _HANDLERS = {
 }
 
 
-async def call(name: str, arguments: dict) -> list[types.TextContent]:
-    result = await _HANDLERS[name](arguments)
+async def call(name: str, arguments: dict, username: str) -> list[types.TextContent]:
+    result = await _HANDLERS[name](arguments, username)
     return [types.TextContent(type="text", text=json.dumps(result))]
