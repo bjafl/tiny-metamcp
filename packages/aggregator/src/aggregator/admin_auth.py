@@ -39,7 +39,7 @@ def get_session_user(request: Request) -> str | None:
         return None
     try:
         username = _signer.loads(cookie, max_age=SESSION_MAX_AGE)
-    except BadSignature, SignatureExpired:
+    except (BadSignature, SignatureExpired):
         return None
     if GITHUB_ALLOWED_USERS and username not in GITHUB_ALLOWED_USERS:
         return None
@@ -105,7 +105,7 @@ async def handle_callback(request: Request) -> RedirectResponse:
         return _login_error("Missing state cookie — possible CSRF")
     try:
         stored_state = _state_signer.loads(state_token, max_age=STATE_MAX_AGE)
-    except BadSignature, SignatureExpired:
+    except (BadSignature, SignatureExpired):
         return _login_error("Invalid or expired state — please try again")
     if not secrets.compare_digest(state, stored_state):
         return _login_error("State mismatch — please try again")
