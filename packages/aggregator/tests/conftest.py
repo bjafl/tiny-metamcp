@@ -14,7 +14,7 @@ import threading
 import time
 
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="aggregator-test-data-"))
-os.environ.setdefault("ADMIN_TOKEN", "test-admin-token")
+os.environ.setdefault("ADMIN_USERS", "test-admin")
 
 import pytest
 
@@ -79,6 +79,20 @@ def proxy_target_url() -> str:
     thread.start()
     _wait_for_port(port)
     return f"http://127.0.0.1:{port}/mcp"
+
+
+@pytest.fixture
+async def token_for():
+    """Factory fixture: `token = await token_for("alice")` mints a real
+    personal token for that username via access_control, exercising the
+    same hash-and-store path a real user's self-service token generation
+    would."""
+    from aggregator import access_control
+
+    async def _make(username: str) -> str:
+        return await access_control.generate_personal_token(username)
+
+    return _make
 
 
 @pytest.fixture(autouse=True)
