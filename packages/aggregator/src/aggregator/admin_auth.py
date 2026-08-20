@@ -14,8 +14,8 @@ from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
+from . import access_control
 from .config import (
-    ADMIN_TOKEN,
     GITHUB_ALLOWED_USERS,
     GITHUB_CLIENT_ID,
     GITHUB_CLIENT_SECRET,
@@ -46,18 +46,22 @@ def get_session_user(request: Request) -> str | None:
     return username
 
 
-def require_api_auth(request: Request) -> None:
+async def require_api_auth(request: Request) -> str:
     """FastAPI dependency for /api/* routes.
 
-    Accepts an admin session cookie (browser tool-tester) or a Bearer
-    ADMIN_TOKEN (programmatic access). Does not accept MCP OAuth tokens —
-    those are only valid for /mcp and /messages.
+    Accepts an admin session cookie (browser) or a personal-token Bearer
+    header (programmatic access). Does not accept MCP OAuth tokens — those
+    are only valid for /mcp and /messages. Returns the authenticated
+    username so callers can scope their query to it.
     """
-    if get_session_user(request):
-        return
+    user = get_session_user(request)
+    if user:
+        return user
     auth = request.headers.get("authorization", "")
-    if ADMIN_TOKEN and auth == f"Bearer {ADMIN_TOKEN}":
-        return
+    if auth.startswith("Bearer "):
+        username = await access_control.validate_personal_token(auth[7:])
+        if username:
+            return username
     raise HTTPException(status_code=401, detail="Unauthorized")
 
 
