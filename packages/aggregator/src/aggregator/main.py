@@ -5,12 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from . import admin_auth, log_capture, oauth
-from .aggregator import mcp_server, sse_transport, streamable_manager
+from . import access_control, admin_auth, log_capture, oauth
+from .aggregator import current_user, mcp_server, sse_transport, streamable_manager
 from .api.oauth_router import router as oauth_router
 from .api.routers import router as api_router
 from .child_manager import child_manager
-from .config import ADMIN_TOKEN, LOG_LEVEL, WEBUI_DIST_DIR
+from .config import LOG_LEVEL, WEBUI_DIST_DIR
 from .database import init_db, list_servers
 
 logging.basicConfig(level=LOG_LEVEL)
@@ -53,11 +53,13 @@ app.include_router(api_router, prefix="/api")
 # ── Bearer auth for MCP endpoints ────────────────────────────────────────────
 
 
-async def _check_bearer(request: Request) -> None:
+async def _check_bearer(request: Request) -> str:
     """
     Bearer auth for /mcp and /messages.
-    Accepts static ADMIN_TOKEN or a valid OAuth access token.
-    Returns 401 + WWW-Authenticate so MCP clients can discover OAuth.
+    Accepts a valid OAuth access token or a personal token, and sets the
+    resolved username on aggregator.current_user for handle_list_tools/
+    handle_call_tool to read. Returns 401 + WWW-Authenticate so MCP clients
+    can discover OAuth.
 
     Called two ways: as a FastAPI Depends() on the /mcp route, and directly
     (not via Depends()) from _messages_asgi below, since /messages is a raw
@@ -69,10 +71,12 @@ async def _check_bearer(request: Request) -> None:
     auth = request.headers.get("authorization", "")
     if auth.startswith("Bearer "):
         token = auth[7:]
-        if ADMIN_TOKEN and token == ADMIN_TOKEN:
-            return
-        if await oauth.validate_bearer(token):
-            return
+        username = await oauth.validate_bearer(token)
+        if username is None:
+            username = await access_control.validate_personal_token(token)
+        if username:
+            current_user.set(username)
+            return username
     raise HTTPException(
         status_code=401,
         detail="Unauthorized",
@@ -100,7 +104,7 @@ async def _check_bearer(request: Request) -> None:
 
 
 @app.get("/mcp")
-async def mcp_sse(request: Request, _: None = Depends(_check_bearer)):
+async def mcp_sse(request: Request, _: str = Depends(_check_bearer)):
     async with sse_transport.connect_sse(request.scope, request.receive, request._send) as (
         read,
         write,
@@ -115,7 +119,7 @@ async def mcp_sse(request: Request, _: None = Depends(_check_bearer)):
 # streamable_manager.handle_request() fully sends its own response (same
 # double-send hazard as connect_sse() above), hence the explicit Response().
 @app.post("/mcp")
-async def mcp_streamable(request: Request, _: None = Depends(_check_bearer)):
+async def mcp_streamable(request: Request, _: str = Depends(_check_bearer)):
     await streamable_manager.handle_request(request.scope, request.receive, request._send)
     return Response()
 
@@ -182,7 +186,16 @@ async def api_me(request: Request):
     user = admin_auth.get_session_user(request)
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return {"username": user}
+    return {"username": user, "is_admin": access_control.is_admin(user)}
+
+
+@app.post("/api/me/token")
+async def api_generate_token(request: Request):
+    user = admin_auth.get_session_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = await access_control.generate_personal_token(user)
+    return {"token": token}
 
 
 # ── SPA static serving ───────────────────────────────────────────────────────
