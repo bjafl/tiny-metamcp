@@ -13,6 +13,11 @@ class ServerType(StrEnum):
     PROXY = "proxy"
 
 
+class ServerVisibility(StrEnum):
+    EVERYONE = "everyone"
+    PRIVATE = "private"
+
+
 class Server(SQLModel, table=True):
     __tablename__ = "servers"
 
@@ -23,6 +28,8 @@ class Server(SQLModel, table=True):
     args: str = Field(default="[]")  # JSON array
     env: str = Field(default="{}")  # JSON object
     enabled: bool = Field(default=True)
+    owner_username: str | None = Field(default=None)
+    visibility: str = Field(default=ServerVisibility.EVERYONE.value)
 
     def get_args(self) -> list[str]:
         return json.loads(self.args)
@@ -39,4 +46,12 @@ class OAuthToken(SQLModel, table=True):
     github_user: str
     client_id: str
     expires_at: float
+    created_at: float = Field(default_factory=_time.time)
+
+
+class PersonalToken(SQLModel, table=True):
+    __tablename__ = "personal_tokens"
+
+    username: str = Field(primary_key=True)
+    token_hash: str = Field(unique=True, index=True)
     created_at: float = Field(default_factory=_time.time)

@@ -1,14 +1,17 @@
 import json
 
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 
 from .config import DB_PATH
 from .models import (  # noqa: F401 – re-exported for callers
     OAuthToken,
+    PersonalToken,
     Server,
     ServerType,
+    ServerVisibility,
 )
 
 _DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
@@ -18,10 +21,28 @@ _session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
 )
 
 
+async def _migrate_server_columns(conn: AsyncConnection) -> None:
+    """Add columns introduced after a deployment's `servers` table was first
+    created -- `SQLModel.metadata.create_all` only creates missing tables,
+    it never alters an existing one."""
+
+    def _sync(sync_conn):
+        existing = {col["name"] for col in inspect(sync_conn).get_columns("servers")}
+        if "owner_username" not in existing:
+            sync_conn.execute(text("ALTER TABLE servers ADD COLUMN owner_username TEXT"))
+        if "visibility" not in existing:
+            sync_conn.execute(
+                text("ALTER TABLE servers ADD COLUMN visibility TEXT DEFAULT 'everyone'")
+            )
+
+    await conn.run_sync(_sync)
+
+
 async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with _engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await _migrate_server_columns(conn)
 
 
 # ── Servers ───────────────────────────────────────────────────────────────────
@@ -44,6 +65,8 @@ async def add_server(
     package: str,
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
+    owner_username: str | None = None,
+    visibility: str = ServerVisibility.PRIVATE.value,
 ) -> Server:
     server = Server(
         name=name,
@@ -51,6 +74,8 @@ async def add_server(
         package=package,
         args=json.dumps(args or []),
         env=json.dumps(env or {}),
+        owner_username=owner_username,
+        visibility=visibility,
     )
     async with _session_factory() as session:
         session.add(server)
@@ -74,6 +99,7 @@ async def update_server(
     package: str | None = None,
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
+    visibility: str | None = None,
 ) -> Server | None:
     try:
         async with _session_factory() as session:
@@ -92,6 +118,8 @@ async def update_server(
                 server.args = json.dumps(args)
             if env is not None:
                 server.env = json.dumps(env)
+            if visibility is not None:
+                server.visibility = visibility
             await session.commit()
             await session.refresh(server)
             return server
@@ -111,3 +139,25 @@ async def delete_server(server_id: int) -> None:
         if server:
             await session.delete(server)
             await session.commit()
+
+
+# ── Personal tokens ──────────────────────────────────────────────────────────
+
+
+async def set_personal_token(username: str, token_hash: str) -> None:
+    async with _session_factory() as session:
+        existing = await session.get(PersonalToken, username)
+        if existing:
+            existing.token_hash = token_hash
+        else:
+            session.add(PersonalToken(username=username, token_hash=token_hash))
+        await session.commit()
+
+
+async def get_username_by_token_hash(token_hash: str) -> str | None:
+    async with _session_factory() as session:
+        result = await session.execute(
+            select(PersonalToken).where(PersonalToken.token_hash == token_hash)
+        )
+        token = result.scalar_one_or_none()
+        return token.username if token else None
