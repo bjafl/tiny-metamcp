@@ -192,7 +192,8 @@ async def api_restart_server(server_id: int, username: str = Depends(require_api
 
 
 @router.get("/tools")
-async def api_list_tools():
+async def api_list_tools(username: str = Depends(require_api_auth)):
+    visible = await access_control.visible_server_names(username)
     return [
         {
             "server": name,
@@ -201,6 +202,7 @@ async def api_list_tools():
             "inputSchema": tool.input_schema,
         }
         for name, tool in child_manager.all_tools()
+        if name in visible
     ]
 
 
@@ -211,7 +213,9 @@ class CallToolRequest(BaseModel):
 
 
 @router.post("/tools/call")
-async def api_call_tool(req: CallToolRequest):
+async def api_call_tool(req: CallToolRequest, username: str = Depends(require_api_auth)):
+    if req.server not in await access_control.visible_server_names(username):
+        raise HTTPException(status_code=404, detail=f"Server '{req.server}' not found")
     state = child_manager.get(req.server)
     if not state:
         raise HTTPException(status_code=404, detail=f"Server '{req.server}' not found")
@@ -237,23 +241,49 @@ async def api_call_tool(req: CallToolRequest):
 
 
 @router.get("/logs")
-async def api_get_logs(server: str | None = None, limit: int = 200):
-    return log_capture.get_entries(server=server, limit=limit)
+async def api_get_logs(
+    server: str | None = None, limit: int = 200, username: str = Depends(require_api_auth)
+):
+    visible = await access_control.visible_server_names(username)
+    if server:
+        if server not in visible:
+            raise HTTPException(status_code=404, detail=f"Server '{server}' not found")
+        return log_capture.get_entries(server=server, limit=limit)
+    return [
+        e
+        for e in log_capture.get_entries(limit=limit)
+        if not e["server"] or e["server"] in visible
+    ]
 
 
 @router.get("/logs/stream")
-async def api_stream_logs(request: Request, server: str | None = None):
+async def api_stream_logs(
+    request: Request, server: str | None = None, username: str = Depends(require_api_auth)
+):
     from sse_starlette.sse import EventSourceResponse
 
+    visible = await access_control.visible_server_names(username)
+    if server and server not in visible:
+        raise HTTPException(status_code=404, detail=f"Server '{server}' not found")
+
     async def generator():
+        # log_capture._broker.subscribe(server=X) already only yields
+        # entries for X when X is given, so the visibility check above
+        # already fully scoped that case -- this per-entry filter only
+        # matters for the server=None (all-servers) case.
         async for entry in log_capture._broker.subscribe(server=server):
-            yield {"data": _json.dumps(entry.as_dict())}
+            if server or not entry.server or entry.server in visible:
+                yield {"data": _json.dumps(entry.as_dict())}
 
     return EventSourceResponse(generator())
 
 
 @router.get("/logs/{server_name}/stderr")
-async def api_get_stderr(server_name: str, limit: int = 200):
+async def api_get_stderr(
+    server_name: str, limit: int = 200, username: str = Depends(require_api_auth)
+):
+    if server_name not in await access_control.visible_server_names(username):
+        raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found")
     lines = log_capture.read_log_file(server_name, limit=limit)
     return {"server": server_name, "lines": lines}
 
