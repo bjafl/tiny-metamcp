@@ -5,9 +5,11 @@ without raising -- it previously used Python 2 `except X, Y:` syntax, a
 SyntaxError under Python 3 that made the whole module fail to import.
 """
 
-from fastapi import Request
+import pytest
+from fastapi import HTTPException, Request
 
-from aggregator.admin_auth import get_session_user
+from aggregator import access_control
+from aggregator.admin_auth import get_session_user, require_api_auth
 
 
 def _request_with_cookie(cookie_value: str) -> Request:
@@ -24,13 +26,6 @@ def test_get_session_user_returns_none_for_garbage_cookie():
 
 def test_get_session_user_returns_none_when_no_cookie():
     assert get_session_user(Request({"type": "http", "headers": []})) is None
-
-
-import pytest
-from fastapi import HTTPException
-
-from aggregator import access_control
-from aggregator.admin_auth import require_api_auth
 
 
 def _request_with_headers(headers: dict[str, str]) -> Request:
