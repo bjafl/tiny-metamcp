@@ -112,7 +112,7 @@ export function AddServerDialog({
       const result = await editServer.mutateAsync({ id: server.id, input: payload });
       if (result.error) return;
     } else {
-      const payload = { name, type, package: pkg, args: parseArgs(args), env: parseEnv(env) };
+      const payload = { name, type, package: pkg, args: parseArgs(args), env: parseEnv(env), visibility: "everyone" as const };
       const result = await addServer.mutateAsync(payload);
       if (result.error) return;
     }

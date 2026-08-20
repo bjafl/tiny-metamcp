@@ -3,6 +3,7 @@ import type {
   AddServerResult,
   CallToolInput,
   CallToolResult,
+  GenerateTokenResult,
   Me,
   ServerConfig,
   ToolInfo,
@@ -38,6 +39,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   me: () => request<Me>("/api/me"),
+  generateToken: () =>
+    request<GenerateTokenResult>("/api/me/token", { method: "POST" }),
   listServers: () => request<ServerConfig[]>("/api/servers"),
   addServer: (input: AddServerInput) =>
     request<AddServerResult>("/api/servers", {

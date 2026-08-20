@@ -1,4 +1,5 @@
 export type ServerType = "pypi" | "npm" | "git" | "cmd" | "proxy";
+export type ServerVisibility = "everyone" | "private";
 
 export interface ServerConfig {
   id: number;
@@ -11,6 +12,8 @@ export interface ServerConfig {
   running: boolean;
   tool_count: number;
   error: string | null;
+  owner: string | null;
+  visibility: ServerVisibility;
 }
 
 export interface AddServerInput {
@@ -19,6 +22,7 @@ export interface AddServerInput {
   package: string;
   args: string[];
   env: Record<string, string>;
+  visibility: ServerVisibility;
 }
 
 export interface AddServerResult {
@@ -56,4 +60,9 @@ export interface LogEntry {
 
 export interface Me {
   username: string;
+  is_admin: boolean;
+}
+
+export interface GenerateTokenResult {
+  token: string;
 }
