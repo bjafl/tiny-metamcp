@@ -34,6 +34,13 @@ export function AppLayout() {
             >
               Tool Tester
             </Link>
+            <Link
+              to="/account"
+              activeProps={{ className: "font-semibold text-foreground" }}
+              className="text-sm text-muted-foreground"
+            >
+              Account
+            </Link>
           </div>
           <div className="flex items-center gap-3 text-sm text-muted-foreground">
             <ThemeToggle />
