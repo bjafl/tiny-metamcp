@@ -8,7 +8,7 @@ dispatch handlers (aggregator.py) -- the rule lives here exactly once.
 import hashlib
 import secrets
 
-from .config import ADMIN_USERS
+from .config import ADMIN_USERS, GITHUB_ALLOWED_USERS
 from .database import (
     get_username_by_token_hash,
     list_servers,
@@ -52,4 +52,7 @@ async def generate_personal_token(username: str) -> str:
 
 
 async def validate_personal_token(token: str) -> str | None:
-    return await get_username_by_token_hash(_hash_token(token))
+    username = await get_username_by_token_hash(_hash_token(token))
+    if username and GITHUB_ALLOWED_USERS and username not in GITHUB_ALLOWED_USERS:
+        return None
+    return username

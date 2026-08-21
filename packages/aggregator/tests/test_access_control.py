@@ -101,3 +101,17 @@ async def test_regenerating_token_invalidates_previous_one():
 
 async def test_validate_personal_token_unknown_token_returns_none():
     assert await access_control.validate_personal_token("not-a-real-token") is None
+
+
+async def test_validate_personal_token_rejects_deprovisioned_user(monkeypatch):
+    """A personal token must stop working once its owner is removed from
+    GITHUB_ALLOWED_USERS -- the token store alone must not keep a
+    deprovisioned user's access alive (mirrors admin_auth.get_session_user's
+    same allowlist check for the session-cookie path)."""
+    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", {ADMIN})
+
+    deprovisioned_token = await access_control.generate_personal_token("token-user-3")
+    assert await access_control.validate_personal_token(deprovisioned_token) is None
+
+    admin_token = await access_control.generate_personal_token(ADMIN)
+    assert await access_control.validate_personal_token(admin_token) == ADMIN
