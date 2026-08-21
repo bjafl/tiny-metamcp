@@ -8,6 +8,7 @@ export function AccountPage() {
   const { data: me } = useMe();
   const generateToken = useGenerateToken();
   const [token, setToken] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   return (
     <div className="max-w-lg space-y-6">
@@ -29,6 +30,7 @@ export function AccountPage() {
           onClick={async () => {
             const result = await generateToken.mutateAsync();
             setToken(result.token);
+            setCopied(false);
           }}
           disabled={generateToken.isPending}
         >
@@ -41,6 +43,17 @@ export function AccountPage() {
           <div className="space-y-1">
             <p className="text-sm font-medium">Copy this now — it won't be shown again:</p>
             <pre className="overflow-x-auto rounded-md border bg-muted p-2 text-xs">{token}</pre>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await navigator.clipboard.writeText(token);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }}
+            >
+              {copied ? "Copied!" : "Copy"}
+            </Button>
           </div>
         ) : null}
       </div>

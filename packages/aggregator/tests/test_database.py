@@ -1,6 +1,8 @@
 """
-Regression tests for aggregator.database.update_server -- the partial-field
-update used by both PATCH /servers/{id} and the edit_server meta-tool.
+Tests for aggregator.database: update_server's partial-field update (used
+by both PATCH /servers/{id} and the edit_server meta-tool), add_server's
+visibility/owner defaults, personal-token CRUD (set/get by hash), and the
+_migrate_server_columns SQLite column-backfill migration.
 """
 
 import sqlite3

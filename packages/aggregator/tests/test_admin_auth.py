@@ -1,8 +1,7 @@
 """
-Regression test for the admin_auth module actually being importable and
-get_session_user() correctly rejecting a garbage/expired session cookie
-without raising -- it previously used Python 2 `except X, Y:` syntax, a
-SyntaxError under Python 3 that made the whole module fail to import.
+Tests that admin_auth.get_session_user() correctly rejects a garbage or
+expired session cookie by returning None, rather than raising, and that
+require_api_auth() enforces personal-token auth as expected.
 """
 
 import pytest

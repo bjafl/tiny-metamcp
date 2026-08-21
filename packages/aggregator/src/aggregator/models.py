@@ -29,6 +29,9 @@ class Server(SQLModel, table=True):
     env: str = Field(default="{}")  # JSON object
     enabled: bool = Field(default=True)
     owner_username: str | None = Field(default=None)
+    # Model-level default is "everyone" for migration parity only (see
+    # database._migrate_server_columns) -- new-server creation paths must
+    # pass visibility explicitly (database.add_server defaults to PRIVATE).
     visibility: str = Field(default=ServerVisibility.EVERYONE.value)
 
     def get_args(self) -> list[str]:

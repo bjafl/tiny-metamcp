@@ -131,7 +131,15 @@ class MemoryLogHandler(logging.Handler):
 
 
 def setup(root_logger: logging.Logger | None = None) -> None:
-    """Attach the memory handler to the root logger."""
+    """Attach the memory handler to the root logger.
+
+    Idempotent: a second call (e.g. a module re-import in tests, or an app
+    restart within the same process) is a no-op instead of stacking up
+    duplicate handlers that would each capture and re-publish every record.
+    """
+    logger = root_logger or logging.getLogger()
+    if any(isinstance(h, MemoryLogHandler) for h in logger.handlers):
+        return
     handler = MemoryLogHandler()
     handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
-    (root_logger or logging.getLogger()).addHandler(handler)
+    logger.addHandler(handler)

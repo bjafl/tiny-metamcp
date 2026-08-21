@@ -158,10 +158,10 @@ TOKEN=<your personal token>
 # List servers
 curl -H "Authorization: Bearer $TOKEN" $BASE/api/servers | jq
 
-# Generate/regenerate your personal token (requires an active browser
-# session — cannot be done with a bearer token, only from a logged-in
-# webui session)
-curl -X POST -H "Authorization: Bearer $TOKEN" $BASE/api/me/token
+# To generate/regenerate your personal token, use the webui's Account page
+# instead (see "Web UI" above) — /api/me/token only accepts an active
+# browser session cookie, not a bearer token, so it can't be called with
+# curl like the endpoints below.
 
 # Add a server
 curl -X POST $BASE/api/servers \
