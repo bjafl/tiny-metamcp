@@ -68,13 +68,15 @@ async def aggregator_url():
 
 
 async def _list_tool_names(url: str, token: str) -> set[str]:
-    async with streamable_http_client(
-        url, http_client=httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"})
-    ) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.list_tools()
-            return {t.name for t in result.tools}
+    async with (
+        streamable_http_client(
+            url, http_client=httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"})
+        ) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        result = await session.list_tools()
+        return {t.name for t in result.tools}
 
 
 async def test_mcp_tool_list_filters_private_servers_per_user(proxy_target_url, aggregator_url):
@@ -127,14 +129,18 @@ async def test_mcp_call_tool_rejects_private_server_for_non_owner(proxy_target_u
     )
     await child_manager.add(config)
     try:
-        async with streamable_http_client(
-            aggregator_url,
-            http_client=httpx2.AsyncClient(headers={"Authorization": f"Bearer {stranger_token}"}),
-        ) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                with pytest.raises(MCPError):
-                    await session.call_tool(f"{name}__echo", {"text": "hi"})
+        async with (
+            streamable_http_client(
+                aggregator_url,
+                http_client=httpx2.AsyncClient(
+                    headers={"Authorization": f"Bearer {stranger_token}"}
+                ),
+            ) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            with pytest.raises(MCPError):
+                await session.call_tool(f"{name}__echo", {"text": "hi"})
     finally:
         await child_manager.remove(name)
         await delete_server(config.id)

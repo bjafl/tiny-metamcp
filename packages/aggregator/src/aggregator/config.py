@@ -17,6 +17,4 @@ GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 GITHUB_ALLOWED_USERS: set[str] = {
     u.strip() for u in os.getenv("GITHUB_ALLOWED_USERS", "").split(",") if u.strip()
 }
-ADMIN_USERS: set[str] = {
-    u.strip() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()
-}
+ADMIN_USERS: set[str] = {u.strip() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()}

@@ -10,7 +10,6 @@ from ..database import (
     add_server,
     delete_server,
     get_server,
-    list_servers,
     update_server,
     update_server_enabled,
 )
@@ -250,9 +249,7 @@ async def api_get_logs(
             raise HTTPException(status_code=404, detail=f"Server '{server}' not found")
         return log_capture.get_entries(server=server, limit=limit)
     return [
-        e
-        for e in log_capture.get_entries(limit=limit)
-        if not e["server"] or e["server"] in visible
+        e for e in log_capture.get_entries(limit=limit) if not e["server"] or e["server"] in visible
     ]
 
 
