@@ -9,13 +9,17 @@ transport. Auth is a real personal token minted via the token_for fixture
 path a live personal token would.
 """
 
+import time
+
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from aggregator import log_capture
 from aggregator.api.routers import router as api_router
 from aggregator.child_manager import child_manager
 from aggregator.database import delete_server, list_servers
+from aggregator.log_capture import LogEntry
 
 OWNER = "router-owner"
 STRANGER = "router-stranger"
@@ -342,7 +346,9 @@ async def test_add_server_defaults_to_private_and_records_owner(client, auth_hea
         await _cleanup_by_name(name)
 
 
-async def test_list_servers_hides_private_servers_from_other_users(client, auth_headers, stranger_headers):
+async def test_list_servers_hides_private_servers_from_other_users(
+    client, auth_headers, stranger_headers
+):
     name = "router-visibility-hidden"
     try:
         await client.post(
@@ -363,7 +369,9 @@ async def test_list_servers_hides_private_servers_from_other_users(client, auth_
         await _cleanup_by_name(name)
 
 
-async def test_list_servers_shows_everyone_visibility_to_all(client, auth_headers, stranger_headers):
+async def test_list_servers_shows_everyone_visibility_to_all(
+    client, auth_headers, stranger_headers
+):
     name = "router-visibility-shared"
     try:
         await client.post(
@@ -400,7 +408,9 @@ async def test_stranger_gets_404_managing_owners_private_server(
         server_id = added.json()["server"]["id"]
 
         patch_resp = await client.patch(
-            f"/api/servers/{server_id}", json={"package": "http://b.invalid/mcp"}, headers=stranger_headers
+            f"/api/servers/{server_id}",
+            json={"package": "http://b.invalid/mcp"},
+            headers=stranger_headers,
         )
         delete_resp = await client.delete(f"/api/servers/{server_id}", headers=stranger_headers)
         assert patch_resp.status_code == 404
@@ -498,5 +508,78 @@ async def test_logs_stderr_rejects_inaccessible_server(client, auth_headers, str
         stranger_resp = await client.get(f"/api/logs/{name}/stderr", headers=stranger_headers)
         assert owner_resp.status_code == 200
         assert stranger_resp.status_code == 404
+    finally:
+        await _cleanup_by_name(name)
+
+
+async def test_logs_get_rejects_inaccessible_explicit_server(
+    client, auth_headers, stranger_headers
+):
+    name = "router-logs-explicit-scoped"
+    try:
+        await client.post(
+            "/api/servers",
+            json={
+                "name": name,
+                "type": "proxy",
+                "package": "http://a.invalid/mcp",
+                "visibility": "private",
+            },
+            headers=auth_headers,
+        )
+        resp = await client.get("/api/logs", params={"server": name}, headers=stranger_headers)
+        assert resp.status_code == 404
+    finally:
+        await _cleanup_by_name(name)
+
+
+async def test_logs_get_no_server_param_excludes_private_entries_from_stranger(
+    client, auth_headers, stranger_headers
+):
+    name = "router-logs-unscoped"
+    try:
+        await client.post(
+            "/api/servers",
+            json={
+                "name": name,
+                "type": "proxy",
+                "package": "http://a.invalid/mcp",
+                "visibility": "private",
+            },
+            headers=auth_headers,
+        )
+        log_capture._append(
+            LogEntry(ts=time.time(), level="INFO", server=name, msg="private-server-log-entry")
+        )
+
+        owner_resp = await client.get("/api/logs", headers=auth_headers)
+        stranger_resp = await client.get("/api/logs", headers=stranger_headers)
+        assert owner_resp.status_code == 200
+        assert stranger_resp.status_code == 200
+        assert any(e["server"] == name for e in owner_resp.json())
+        assert all(e["server"] != name for e in stranger_resp.json())
+    finally:
+        await _cleanup_by_name(name)
+
+
+async def test_logs_stream_rejects_inaccessible_explicit_server(
+    client, auth_headers, stranger_headers
+):
+    name = "router-logs-stream-scoped"
+    try:
+        await client.post(
+            "/api/servers",
+            json={
+                "name": name,
+                "type": "proxy",
+                "package": "http://a.invalid/mcp",
+                "visibility": "private",
+            },
+            headers=auth_headers,
+        )
+        resp = await client.get(
+            "/api/logs/stream", params={"server": name}, headers=stranger_headers
+        )
+        assert resp.status_code == 404
     finally:
         await _cleanup_by_name(name)
