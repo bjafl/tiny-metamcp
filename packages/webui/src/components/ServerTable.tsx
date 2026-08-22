@@ -58,94 +58,103 @@ export function ServerTable({ servers }: { servers: ServerConfig[] }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {servers.map((s) => (
-            <TableRow key={s.id}>
-              <TableCell className="font-medium">{s.name}</TableCell>
-              <TableCell>{s.type}</TableCell>
-              <TableCell className="max-w-xs truncate">{s.package}</TableCell>
-              <TableCell className="text-muted-foreground">{s.owner ?? "—"}</TableCell>
-              <TableCell>
-                {me?.is_admin ? (
-                  <Select
-                    value={s.visibility}
-                    onValueChange={(v) =>
-                      editServer.mutate({
-                        id: s.id,
-                        input: { visibility: v as ServerVisibility },
-                      })
-                    }
-                  >
-                    <SelectTrigger size="sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="private">Private</SelectItem>
-                      <SelectItem value="everyone">Everyone</SelectItem>
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Badge variant={s.visibility === "everyone" ? "outline" : "secondary"}>
-                    {s.visibility === "everyone" ? "Everyone" : "Private"}
-                  </Badge>
-                )}
-              </TableCell>
-              <TableCell>
-                <StatusBadge server={s} />
-                {s.error ? (
-                  <p className="mt-1 text-xs text-destructive">{s.error}</p>
-                ) : null}
-              </TableCell>
-              <TableCell className="space-x-2 text-right">
-                {s.enabled ? (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => restartServer.mutate(s.id)}
+          {servers.map((s) => {
+            const canManage = me?.is_admin || s.owner === me?.username;
+            return (
+              <TableRow key={s.id}>
+                <TableCell className="font-medium">{s.name}</TableCell>
+                <TableCell>{s.type}</TableCell>
+                <TableCell className="max-w-xs truncate">{s.package}</TableCell>
+                <TableCell className="text-muted-foreground">{s.owner ?? "—"}</TableCell>
+                <TableCell>
+                  {me?.is_admin ? (
+                    <Select
+                      value={s.visibility}
+                      onValueChange={(v) =>
+                        editServer.mutate({
+                          id: s.id,
+                          input: { visibility: v as ServerVisibility },
+                        })
+                      }
                     >
-                      Restart
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => disableServer.mutate(s.id)}
-                    >
-                      Disable
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => enableServer.mutate(s.id)}
-                  >
-                    Enable
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setDialogServer(s);
-                    setEditingServer(s);
-                  }}
-                >
-                  Edit
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={() => {
-                    if (confirm(`Delete server "${s.name}"?`)) {
-                      deleteServer.mutate(s.id);
-                    }
-                  }}
-                >
-                  Delete
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
+                      <SelectTrigger size="sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="private">Private</SelectItem>
+                        <SelectItem value="everyone">Everyone</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge variant={s.visibility === "everyone" ? "outline" : "secondary"}>
+                      {s.visibility === "everyone" ? "Everyone" : "Private"}
+                    </Badge>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <StatusBadge server={s} />
+                  {s.error ? (
+                    <p className="mt-1 text-xs text-destructive">{s.error}</p>
+                  ) : null}
+                </TableCell>
+                <TableCell className="space-x-2 text-right">
+                  {canManage ? (
+                    <>
+                      {s.enabled ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => restartServer.mutate(s.id)}
+                          >
+                            Restart
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => disableServer.mutate(s.id)}
+                          >
+                            Disable
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => enableServer.mutate(s.id)}
+                        >
+                          Enable
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setDialogServer(s);
+                          setEditingServer(s);
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => {
+                          if (confirm(`Delete server "${s.name}"?`)) {
+                            deleteServer.mutate(s.id);
+                          }
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
       {dialogServer ? (
