@@ -15,7 +15,7 @@ MCP Client (Claude Web UI, Claude Desktop, etc.)
         ▼
    mcp-aggregator  (FastAPI + Python MCP SDK)
     ├── /mcp        SSE endpoint  ← MCP clients
-    ├── /admin      Web UI        ← browser (GitHub login)
+    ├── /admin      Web UI        ← browser (GitHub or Steam login)
     ├── /api        REST API      ← browser session or Bearer token
     └── /health     Health check  ← Docker
          │
@@ -47,7 +47,7 @@ cd tiny-metamcp
 # Non-interactive: generates secrets, sets CHANGE_ME for the rest
 just init-env
 
-# Interactive: prompts for domain and GitHub values
+# Interactive: prompts for domain, GitHub, and Steam values
 just init-env -i
 ```
 
@@ -152,7 +152,7 @@ npx @modelcontextprotocol/inspector
 
 ### Web UI
 
-Go to `https://<MCP_DOMAIN>/admin` — sign in with GitHub. From here you can:
+Go to `https://<MCP_DOMAIN>/admin` — sign in with GitHub or Steam (whichever is configured). From here you can:
 
 - **MCP Servers** — add, edit, enable/disable, restart, and delete servers
 - **Logs** — view aggregator logs and child process stderr in real time (live SSE stream)
