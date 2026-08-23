@@ -88,15 +88,15 @@ async def test_visible_server_names_matches_visible_servers():
 
 
 async def test_generate_and_validate_personal_token_round_trip():
-    token = await access_control.generate_personal_token("token-user")
-    assert await access_control.validate_personal_token(token) == "token-user"
+    token = await access_control.generate_personal_token("github:token-user")
+    assert await access_control.validate_personal_token(token) == "github:token-user"
 
 
 async def test_regenerating_token_invalidates_previous_one():
-    old_token = await access_control.generate_personal_token("token-user-2")
-    new_token = await access_control.generate_personal_token("token-user-2")
+    old_token = await access_control.generate_personal_token("github:token-user-2")
+    new_token = await access_control.generate_personal_token("github:token-user-2")
     assert await access_control.validate_personal_token(old_token) is None
-    assert await access_control.validate_personal_token(new_token) == "token-user-2"
+    assert await access_control.validate_personal_token(new_token) == "github:token-user-2"
 
 
 async def test_validate_personal_token_unknown_token_returns_none():
@@ -110,8 +110,41 @@ async def test_validate_personal_token_rejects_deprovisioned_user(monkeypatch):
     same allowlist check for the session-cookie path)."""
     monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", {ADMIN})
 
-    deprovisioned_token = await access_control.generate_personal_token("token-user-3")
+    deprovisioned_token = await access_control.generate_personal_token("github:token-user-3")
     assert await access_control.validate_personal_token(deprovisioned_token) is None
 
-    admin_token = await access_control.generate_personal_token(ADMIN)
-    assert await access_control.validate_personal_token(admin_token) == ADMIN
+    admin_token = await access_control.generate_personal_token(f"github:{ADMIN}")
+    assert await access_control.validate_personal_token(admin_token) == f"github:{ADMIN}"
+
+
+def test_is_allowed_true_for_github_user_in_allowlist(monkeypatch):
+    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", {"octocat"})
+    assert access_control.is_allowed("github:octocat")
+
+
+def test_is_allowed_false_for_github_user_not_in_allowlist(monkeypatch):
+    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", {"octocat"})
+    assert not access_control.is_allowed("github:someone-else")
+
+
+def test_is_allowed_true_for_github_user_when_allowlist_empty(monkeypatch):
+    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", set())
+    assert access_control.is_allowed("github:anyone")
+
+
+def test_is_allowed_true_for_steam_user_in_allowlist(monkeypatch):
+    monkeypatch.setattr(access_control, "STEAM_ALLOWED_USERS", {"76561198012345678"})
+    assert access_control.is_allowed("steam:76561198012345678")
+
+
+def test_is_allowed_false_for_steam_user_not_in_allowlist(monkeypatch):
+    monkeypatch.setattr(access_control, "STEAM_ALLOWED_USERS", {"76561198012345678"})
+    assert not access_control.is_allowed("steam:99999999999999999")
+
+
+def test_is_allowed_false_for_unknown_provider_prefix():
+    assert not access_control.is_allowed("discord:someone")
+
+
+def test_is_allowed_false_for_unprefixed_username():
+    assert not access_control.is_allowed("octocat")

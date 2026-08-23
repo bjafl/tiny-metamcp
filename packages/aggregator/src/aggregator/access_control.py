@@ -1,20 +1,37 @@
 """
-Single source of truth for who can see and manage which MCP servers, and
-for personal API token hashing/validation. Imported by the REST API
-(routers.py), the MCP meta-tools (meta_tools.py), and the /mcp tool-list/
-dispatch handlers (aggregator.py) -- the rule lives here exactly once.
+Single source of truth for who can see and manage which MCP servers, for
+personal API token hashing/validation, and for whether a resolved identity
+(from any identity provider) is allowed to authenticate at all. Imported by
+the REST API (routers.py), the MCP meta-tools (meta_tools.py), the /mcp
+tool-list/dispatch handlers (aggregator.py), and the auth flows
+(admin_auth.py, oauth.py) -- the rule lives here exactly once.
 """
 
 import hashlib
 import secrets
 
-from .config import ADMIN_USERS, GITHUB_ALLOWED_USERS
+from .config import ADMIN_USERS, GITHUB_ALLOWED_USERS, STEAM_ALLOWED_USERS
 from .database import (
     get_username_by_token_hash,
     list_servers,
     set_personal_token,
 )
 from .models import Server, ServerVisibility
+
+
+def is_allowed(username: str) -> bool:
+    """True if a prefixed identity (e.g. "github:octocat",
+    "steam:76561198012345678") is allowed to authenticate, per the
+    matching provider's allowlist. Empty allowlist = unrestricted for that
+    provider. An unrecognized provider prefix is never allowed."""
+    provider, sep, raw = username.partition(":")
+    if not sep:
+        return False
+    if provider == "github":
+        return not GITHUB_ALLOWED_USERS or raw in GITHUB_ALLOWED_USERS
+    if provider == "steam":
+        return not STEAM_ALLOWED_USERS or raw in STEAM_ALLOWED_USERS
+    return False
 
 
 def is_admin(username: str) -> bool:
@@ -53,6 +70,6 @@ async def generate_personal_token(username: str) -> str:
 
 async def validate_personal_token(token: str) -> str | None:
     username = await get_username_by_token_hash(_hash_token(token))
-    if username and GITHUB_ALLOWED_USERS and username not in GITHUB_ALLOWED_USERS:
+    if username and not is_allowed(username):
         return None
     return username
