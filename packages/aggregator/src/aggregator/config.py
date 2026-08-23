@@ -18,3 +18,7 @@ GITHUB_ALLOWED_USERS: set[str] = {
     u.strip() for u in os.getenv("GITHUB_ALLOWED_USERS", "").split(",") if u.strip()
 }
 ADMIN_USERS: set[str] = {u.strip() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()}
+STEAM_API_KEY = os.getenv("STEAM_API_KEY", "")
+STEAM_ALLOWED_USERS: set[str] = {
+    u.strip() for u in os.getenv("STEAM_ALLOWED_USERS", "").split(",") if u.strip()
+}
