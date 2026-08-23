@@ -10,7 +10,6 @@ contract, not our own code's transport handling.
 """
 
 import httpx
-import pytest
 from fastapi import Request
 
 from aggregator import identity_providers
