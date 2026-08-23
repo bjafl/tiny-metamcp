@@ -1,6 +1,6 @@
 # tiny-metamcp
 
-Lightweight self-hosted MCP aggregator for Coolify. Aggregates MCP servers from PyPI, npm, git repositories, and remote HTTP servers behind a single endpoint with GitHub OAuth authentication.
+Lightweight self-hosted MCP aggregator for Coolify. Aggregates MCP servers from PyPI, npm, git repositories, and remote HTTP servers behind a single endpoint with GitHub or Steam authentication.
 
 Inspired by [MetaMCP](https://github.com/metatool-ai/metatool-app).
 
@@ -25,15 +25,16 @@ MCP Client (Claude Web UI, Claude Desktop, etc.)
 ```
 
 **Auth model:**
-- **Browser → `/admin`, `/api`** — GitHub OAuth via signed session cookies. Only usernames in `GITHUB_ALLOWED_USERS` are allowed in.
-- **MCP client → `/mcp`** — OAuth 2.1 + PKCE (Claude Web UI connectors) or a personal API token (Claude Desktop etc. — generate one from the webui's Account page after logging in).
-- **Claude Web UI** — Full OAuth 2.1 flow: discovery → dynamic client registration → PKCE authorize → GitHub login → token exchange. No manual token needed.
+- **Browser → `/admin`, `/api`** — GitHub or Steam login via signed session cookies (whichever is configured; both may be enabled at once). Only allowed identities (`GITHUB_ALLOWED_USERS` / `STEAM_ALLOWED_USERS`) get in.
+- **MCP client → `/mcp`** — OAuth 2.1 + PKCE (Claude Web UI connectors, choosing a provider if more than one is configured) or a personal API token (Claude Desktop etc. — generate one from the webui's Account page after logging in).
+- **Claude Web UI** — Full OAuth 2.1 flow: discovery → dynamic client registration → PKCE authorize → provider login → token exchange. No manual token needed.
+- **Identity across providers** — a GitHub login and a Steam login are always separate identities in this system (`"github:octocat"` vs `"steam:76561198012345678"`) — there's no account linking. `ADMIN_USERS` values must include the provider prefix.
 
 ## Prerequisites
 
 - Docker + Docker Compose
 - [`just`](https://github.com/casey/just) (`cargo install just` or `brew install just`)
-- A GitHub OAuth App (see setup below)
+- A GitHub OAuth App and/or a Steam Web API key (see setup below) — at least one is required
 
 ## Getting Started
 
@@ -63,6 +64,17 @@ Go to **github.com → Settings → Developer settings → OAuth Apps → New OA
 > Both the admin browser login and the MCP client OAuth flow share the same callback path. The app routes them internally based on a cookie set before the GitHub redirect.
 
 Copy the **Client ID** and **Client Secret** into `.env`.
+
+### 2b. (Optional) Get a Steam Web API key
+
+Steam login is an alternative to GitHub — configure either one, or both.
+
+Go to **steamcommunity.com/dev/apikey**, sign in, and request a key (any
+domain name works for the "Domain Name" field, it's not validated
+strictly). Copy the key into `.env` as `STEAM_API_KEY`.
+
+Unlike GitHub's OAuth App, Steam's OpenID 2.0 login needs no callback URL
+registration — it works immediately once `STEAM_API_KEY` is set.
 
 ### 3. Start
 
@@ -225,7 +237,8 @@ These tools are unprefixed — proxied tools are always namespaced `<server>__<t
 > **Access model:** each server has an owner (whoever added it) and a
 > visibility (`everyone` or `private`). A caller can see and use
 > (`list_servers`, tool calls) any `everyone`-visibility server plus
-> their own `private` ones. Only the owner or an admin (`ADMIN_USERS`)
+> their own `private` ones. Only the owner or an admin (`ADMIN_USERS` —
+> prefixed identities like `github:octocat` or `steam:76561198012345678`)
 > can manage a server (`edit_server`/`delete_server`/`enable_server`/
 > `disable_server`/`restart_server`). `env` values returned by
 > `list_servers` are redacted (`***`); variable names are visible but
@@ -427,11 +440,15 @@ curl -X POST $BASE/api/servers \
 |----------|----------|-------------|
 | `MCP_DOMAIN` | ✅ | Public hostname (without `https://`) |
 | `SESSION_SECRET` | ✅ | Signing key for admin session cookies. Generate: `openssl rand -base64 32` |
-| `GITHUB_CLIENT_ID` | ✅ | GitHub OAuth App Client ID |
-| `GITHUB_CLIENT_SECRET` | ✅ | GitHub OAuth App Client Secret |
-| `GITHUB_ALLOWED_USERS` | ✅ | Comma-separated list of allowed GitHub usernames |
-| `ADMIN_USERS` | — | Comma-separated GitHub usernames with admin rights (see all servers, manage any server, override visibility). Should be a subset of `GITHUB_ALLOWED_USERS`. |
+| `GITHUB_CLIENT_ID` | — * | GitHub OAuth App Client ID |
+| `GITHUB_CLIENT_SECRET` | — * | GitHub OAuth App Client Secret |
+| `GITHUB_ALLOWED_USERS` | — | Comma-separated list of allowed GitHub usernames (unprefixed) |
+| `STEAM_API_KEY` | — * | Steam Web API key — its presence enables Steam login |
+| `STEAM_ALLOWED_USERS` | — | Comma-separated list of allowed raw SteamID64s (unprefixed) |
+| `ADMIN_USERS` | — | Comma-separated **prefixed** identities with admin rights (e.g. `github:octocat,steam:76561198012345678`) |
 | `LOG_LEVEL` | — | `DEBUG` / `INFO` / `WARNING` / `ERROR` (default: `INFO`) |
+
+\* At least one of (`GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET`) or `STEAM_API_KEY` is required — the app refuses to start with neither configured.
 
 ---
 

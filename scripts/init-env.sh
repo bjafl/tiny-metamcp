@@ -18,6 +18,8 @@ if $INTERACTIVE; then
     read -rp "GitHub Client Secret: "                    GITHUB_CLIENT_SECRET
     read -rp "GitHub username(s) [comma-separated]: "    GITHUB_ALLOWED_USERS
     read -rp "Admin GitHub username(s) [comma-separated, optional]: " ADMIN_USERS
+    read -rp "Steam Web API key [optional, leave empty to skip Steam login]: " STEAM_API_KEY
+    read -rp "Steam allowed SteamID64(s) [comma-separated, optional]: " STEAM_ALLOWED_USERS
     read -rp "Log level [INFO]: "                        LOG_LEVEL_INPUT
     LOG_LEVEL="${LOG_LEVEL_INPUT:-INFO}"
     echo ""
@@ -27,6 +29,8 @@ else
     GITHUB_CLIENT_SECRET="CHANGE_ME"
     GITHUB_ALLOWED_USERS="CHANGE_ME"
     ADMIN_USERS=""
+    STEAM_API_KEY=""
+    STEAM_ALLOWED_USERS=""
     LOG_LEVEL="INFO"
 fi
 
@@ -56,7 +60,13 @@ GITHUB_ALLOWED_USERS=${GITHUB_ALLOWED_USERS}
 # Comma-separated subset of GITHUB_ALLOWED_USERS with admin rights (see
 # and manage every server, override visibility). Optional — leave empty
 # for no admins.
+# Values must be prefixed: "github:octocat" or "steam:76561198012345678".
 ADMIN_USERS=${ADMIN_USERS}
+
+# ── Steam login (optional alternative to GitHub) ────────────────────────────
+# Get a free key at: https://steamcommunity.com/dev/apikey
+STEAM_API_KEY=${STEAM_API_KEY}
+STEAM_ALLOWED_USERS=${STEAM_ALLOWED_USERS}
 
 # ── Optional ──────────────────────────────────────────────────────────────────
 LOG_LEVEL=${LOG_LEVEL}
