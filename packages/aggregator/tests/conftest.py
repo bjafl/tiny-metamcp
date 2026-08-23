@@ -15,6 +15,8 @@ import time
 
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="aggregator-test-data-"))
 os.environ.setdefault("ADMIN_USERS", "github:test-admin")
+os.environ.setdefault("GITHUB_CLIENT_ID", "test-github-client-id")
+os.environ.setdefault("GITHUB_CLIENT_SECRET", "test-github-client-secret")
 
 import pytest
 

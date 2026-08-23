@@ -81,3 +81,13 @@ async def test_me_token_rejects_bearer_auth():
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         resp = await c.post("/api/me/token", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401
+
+
+async def test_auth_providers_reflects_configured_state(client, monkeypatch):
+    from aggregator import identity_providers
+
+    monkeypatch.setattr(identity_providers.github_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(identity_providers.steam_provider, "is_configured", lambda: False)
+    resp = await client.get("/api/auth/providers")
+    assert resp.status_code == 200
+    assert resp.json() == {"github": True, "steam": False}

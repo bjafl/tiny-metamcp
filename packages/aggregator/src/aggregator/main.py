@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from . import access_control, admin_auth, log_capture, oauth
+from . import access_control, admin_auth, identity_providers, log_capture, oauth
 from .aggregator import current_user, mcp_server, sse_transport, streamable_manager
 from .api.oauth_router import router as oauth_router
 from .api.routers import router as api_router
@@ -29,6 +29,11 @@ async def _token_cleanup_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not identity_providers.configured_providers():
+        raise RuntimeError(
+            "No identity provider configured -- set GITHUB_CLIENT_ID+GITHUB_CLIENT_SECRET "
+            "and/or STEAM_API_KEY."
+        )
     await init_db()
     servers = await list_servers()
     for srv in servers:
@@ -171,7 +176,12 @@ async def health():
 
 @app.get("/admin/login/github")
 async def admin_login_github():
-    return admin_auth.login_redirect()
+    return admin_auth.login_redirect(identity_providers.github_provider)
+
+
+@app.get("/admin/login/steam")
+async def admin_login_steam():
+    return admin_auth.login_redirect(identity_providers.steam_provider)
 
 
 @app.get("/admin/logout")
@@ -181,12 +191,21 @@ async def admin_logout():
     return response
 
 
+@app.get("/api/auth/providers")
+async def api_auth_providers():
+    return {slug: provider.is_configured() for slug, provider in identity_providers.PROVIDERS.items()}
+
+
 @app.get("/api/me")
 async def api_me(request: Request):
     user = admin_auth.get_session_user(request)
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return {"username": user, "is_admin": access_control.is_admin(user)}
+    return {
+        "username": user,
+        "is_admin": access_control.is_admin(user),
+        "display_name": admin_auth.get_session_display_name(request),
+    }
 
 
 @app.post("/api/me/token")
