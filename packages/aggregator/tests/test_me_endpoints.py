@@ -21,8 +21,8 @@ ADMIN = "test-admin"  # set as ADMIN_USERS by conftest.py
 USER = "me-routes-user"
 
 
-def _session_cookie(username: str) -> str:
-    return admin_auth._signer.dumps(username)
+def _session_cookie(username: str, display_name: str | None = None) -> str:
+    return admin_auth._signer.dumps({"username": username, "display_name": display_name or username})
 
 
 @pytest.fixture
@@ -44,6 +44,7 @@ async def test_me_returns_username_and_admin_flag(client):
     body = resp.json()
     assert body["username"] == USER
     assert body["is_admin"] is False
+    assert body["display_name"] == USER
 
 
 async def test_me_reports_admin_true_for_admin_user(client):
