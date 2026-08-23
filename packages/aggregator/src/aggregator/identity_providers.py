@@ -136,6 +136,11 @@ class SteamProvider:
         if params.get("openid.mode") != "id_res":
             logger.warning("Steam callback: unexpected openid.mode=%s", params.get("openid.mode"))
             return None
+        expected_return_to = f"https://{MCP_DOMAIN}/oauth/callback/steam"
+        return_to = params.get("openid.return_to", "")
+        if not return_to.startswith(expected_return_to):
+            logger.warning("Steam callback: unexpected openid.return_to")
+            return None
         claimed_id = params.get("openid.claimed_id", "")
         if not claimed_id.startswith(STEAM_CLAIMED_ID_PREFIX):
             logger.warning("Steam callback: unexpected claimed_id shape: %s", claimed_id)
@@ -143,6 +148,14 @@ class SteamProvider:
         steamid = claimed_id.removeprefix(STEAM_CLAIMED_ID_PREFIX)
         if not steamid.isdigit():
             logger.warning("Steam callback: claimed_id did not contain a numeric SteamID")
+            return None
+
+        # Validate that claimed_id and identity were actually signed by Steam.
+        # check_authentication proves Steam signed *some* params, but not which
+        # ones -- an attacker could strip fields from a genuine assertion.
+        signed_fields = set(params.get("openid.signed", "").split(","))
+        if not {"claimed_id", "identity"} <= signed_fields:
+            logger.warning("Steam callback: claimed_id/identity not in signed field set")
             return None
 
         # The security-critical step: Steam OpenID 2.0 has no client secret,

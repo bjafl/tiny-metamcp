@@ -124,7 +124,11 @@ async def test_steam_provider_resolve_callback_accepts_valid_response(monkeypatc
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "steamcommunity.com":
+            # Verify the check_authentication POST body contains the original params
+            assert request.method == "POST"
             assert b"openid.mode=check_authentication" in request.content
+            assert b"openid.sig=abc" in request.content
+            assert b"76561198012345678" in request.content  # steamid from claimed_id
             return httpx.Response(200, text="ns:http://specs.openid.net/auth/2.0\nis_valid:true\n")
         if request.url.host == "api.steampowered.com":
             return httpx.Response(
@@ -143,7 +147,9 @@ async def test_steam_provider_resolve_callback_accepts_valid_response(monkeypatc
         _request_with_query(
             "openid.mode=id_res&openid.claimed_id="
             "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2F76561198012345678"
-            "&openid.sig=abc"
+            "&openid.sig=abc&openid.signed=claimed_id%2Cidentity"
+            "&openid.return_to=https%3A%2F%2Flocalhost%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
+            "&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
         )
     )
     assert result == identity_providers.ProviderResult(
@@ -171,13 +177,27 @@ async def test_steam_provider_resolve_callback_rejects_forged_response(monkeypat
         _request_with_query(
             "openid.mode=id_res&openid.claimed_id="
             "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2F76561198012345678"
-            "&openid.sig=forged"
+            "&openid.sig=forged&openid.signed=claimed_id%2Cidentity"
+            "&openid.return_to=https%3A%2F%2Flocalhost%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
+            "&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
         )
     )
     assert result is None
 
 
-async def test_steam_provider_resolve_callback_rejects_wrong_mode():
+async def test_steam_provider_resolve_callback_rejects_wrong_mode(monkeypatch):
+    # Stub the http client with a handler that raises -- if the mode guard
+    # regresses, the test fails loudly instead of silently attempting a
+    # real network call.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("should not reach network for wrong mode")
+
+    monkeypatch.setattr(
+        identity_providers,
+        "_steam_http_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10.0),
+    )
+
     result = await identity_providers.steam_provider.resolve_callback(
         _request_with_query("openid.mode=cancel")
     )
@@ -201,7 +221,9 @@ async def test_steam_provider_resolve_callback_falls_back_to_steamid_without_api
         _request_with_query(
             "openid.mode=id_res&openid.claimed_id="
             "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2F76561198012345678"
-            "&openid.sig=abc"
+            "&openid.sig=abc&openid.signed=claimed_id%2Cidentity"
+            "&openid.return_to=https%3A%2F%2Flocalhost%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
+            "&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
         )
     )
     assert result == identity_providers.ProviderResult(
@@ -220,3 +242,76 @@ def test_get_provider_returns_matching_provider_or_none():
     assert identity_providers.get_provider("github") is identity_providers.github_provider
     assert identity_providers.get_provider("steam") is identity_providers.steam_provider
     assert identity_providers.get_provider("discord") is None
+
+
+async def test_steam_provider_resolve_callback_rejects_malformed_claimed_id(monkeypatch):
+    """A claimed_id from a different provider/domain is rejected."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("should not reach network for malformed claimed_id")
+
+    monkeypatch.setattr(
+        identity_providers,
+        "_steam_http_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10.0),
+    )
+
+    result = await identity_providers.steam_provider.resolve_callback(
+        _request_with_query(
+            "openid.mode=id_res&openid.claimed_id="
+            "https%3A%2F%2Fevil.example%2Fopenid%2Fid%2F123"
+        )
+    )
+    assert result is None
+
+
+async def test_steam_provider_resolve_callback_rejects_non_numeric_steamid(monkeypatch):
+    """A claimed_id with a non-numeric SteamID is rejected."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("should not reach network for non-numeric SteamID")
+
+    monkeypatch.setattr(
+        identity_providers,
+        "_steam_http_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10.0),
+    )
+
+    result = await identity_providers.steam_provider.resolve_callback(
+        _request_with_query(
+            "openid.mode=id_res&openid.claimed_id="
+            "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2Fnot-a-number"
+        )
+    )
+    assert result is None
+
+
+async def test_steam_provider_resolve_callback_rejects_missing_signed_fields():
+    """A callback with claimed_id/identity missing from openid.signed is
+    rejected -- this prevents an attacker from stripping fields from a
+    genuine assertion before replaying it."""
+
+    result = await identity_providers.steam_provider.resolve_callback(
+        _request_with_query(
+            "openid.mode=id_res&openid.claimed_id="
+            "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2F76561198012345678"
+            "&openid.signed=mode%2Cns"  # missing claimed_id and identity
+        )
+    )
+    assert result is None
+
+
+async def test_steam_provider_resolve_callback_rejects_mismatched_return_to():
+    """A callback with openid.return_to pointing to a different domain is
+    rejected -- this prevents cross-RP replay attacks where an attacker
+    captures a victim's assertion from another site's callback and replays
+    it here."""
+
+    result = await identity_providers.steam_provider.resolve_callback(
+        _request_with_query(
+            "openid.mode=id_res&openid.claimed_id="
+            "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2F76561198012345678"
+            "&openid.return_to=https%3A%2F%2Fevil.example%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
+        )
+    )
+    assert result is None
