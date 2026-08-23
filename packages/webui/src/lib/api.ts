@@ -1,6 +1,7 @@
 import type {
   AddServerInput,
   AddServerResult,
+  AuthProviders,
   CallToolInput,
   CallToolResult,
   GenerateTokenResult,
@@ -41,6 +42,7 @@ export const api = {
   me: () => request<Me>("/api/me"),
   generateToken: () =>
     request<GenerateTokenResult>("/api/me/token", { method: "POST" }),
+  authProviders: () => request<AuthProviders>("/api/auth/providers"),
   listServers: () => request<ServerConfig[]>("/api/servers"),
   addServer: (input: AddServerInput) =>
     request<AddServerResult>("/api/servers", {

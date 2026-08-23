@@ -61,7 +61,10 @@ export interface LogEntry {
 export interface Me {
   username: string;
   is_admin: boolean;
+  display_name: string | null;
 }
+
+export type AuthProviders = Record<string, boolean>;
 
 export interface GenerateTokenResult {
   token: string;
