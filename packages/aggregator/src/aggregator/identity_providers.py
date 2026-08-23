@@ -16,7 +16,7 @@ import httpx
 from fastapi import Request
 from fastapi.responses import RedirectResponse
 
-from .config import GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, MCP_DOMAIN
+from .config import GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, MCP_DOMAIN, STEAM_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -100,3 +100,99 @@ class GitHubProvider:
 
 
 github_provider = GitHubProvider()
+
+STEAM_OPENID_ENDPOINT = "https://steamcommunity.com/openid/login"
+STEAM_CLAIMED_ID_PREFIX = "https://steamcommunity.com/openid/id/"
+
+
+def _steam_http_client() -> httpx.AsyncClient:
+    """Factory, not a module-level client -- tests monkeypatch this to
+    inject a mocked transport without touching real network."""
+    return httpx.AsyncClient(timeout=10.0)
+
+
+class SteamProvider:
+    slug = "steam"
+
+    def is_configured(self) -> bool:
+        return bool(STEAM_API_KEY)
+
+    def login_redirect(self, state: str) -> RedirectResponse:
+        return_to = f"https://{MCP_DOMAIN}/oauth/callback/steam?state={urllib.parse.quote(state)}"
+        params = urllib.parse.urlencode(
+            {
+                "openid.ns": "http://specs.openid.net/auth/2.0",
+                "openid.mode": "checkid_setup",
+                "openid.return_to": return_to,
+                "openid.realm": f"https://{MCP_DOMAIN}",
+                "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+                "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
+            }
+        )
+        return RedirectResponse(f"{STEAM_OPENID_ENDPOINT}?{params}", status_code=302)
+
+    async def resolve_callback(self, request: Request) -> ProviderResult | None:
+        params = dict(request.query_params)
+        if params.get("openid.mode") != "id_res":
+            logger.warning("Steam callback: unexpected openid.mode=%s", params.get("openid.mode"))
+            return None
+        claimed_id = params.get("openid.claimed_id", "")
+        if not claimed_id.startswith(STEAM_CLAIMED_ID_PREFIX):
+            logger.warning("Steam callback: unexpected claimed_id shape: %s", claimed_id)
+            return None
+        steamid = claimed_id.removeprefix(STEAM_CLAIMED_ID_PREFIX)
+        if not steamid.isdigit():
+            logger.warning("Steam callback: claimed_id did not contain a numeric SteamID")
+            return None
+
+        # The security-critical step: Steam OpenID 2.0 has no client secret,
+        # so a callback's authenticity is verified by POSTing the exact same
+        # params back to Steam with openid.mode=check_authentication and
+        # checking the response body contains "is_valid:true". Skipping
+        # this lets an attacker forge a callback claiming any SteamID.
+        verify_params = dict(params)
+        verify_params["openid.mode"] = "check_authentication"
+        try:
+            async with _steam_http_client() as h:
+                verify_resp = await h.post(STEAM_OPENID_ENDPOINT, data=verify_params)
+                verify_resp.raise_for_status()
+        except Exception as exc:
+            logger.warning("Steam check_authentication error: %s", exc)
+            return None
+        if "is_valid:true" not in verify_resp.text:
+            logger.warning("Steam callback: check_authentication rejected the response")
+            return None
+
+        display_name = steamid
+        if STEAM_API_KEY:
+            try:
+                async with _steam_http_client() as h:
+                    summary_resp = await h.get(
+                        "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/",
+                        params={"key": STEAM_API_KEY, "steamids": steamid},
+                    )
+                    summary_resp.raise_for_status()
+                    players = summary_resp.json().get("response", {}).get("players", [])
+                    if players:
+                        display_name = players[0].get("personaname", steamid)
+            except Exception as exc:
+                logger.warning("Steam GetPlayerSummaries error: %s", exc)
+                # Non-fatal: login still succeeds, just with the raw SteamID64.
+
+        return ProviderResult(username=f"steam:{steamid}", display_name=display_name)
+
+
+steam_provider = SteamProvider()
+
+PROVIDERS: dict[str, IdentityProvider] = {
+    "github": github_provider,
+    "steam": steam_provider,
+}
+
+
+def configured_providers() -> list[IdentityProvider]:
+    return [p for p in PROVIDERS.values() if p.is_configured()]
+
+
+def get_provider(slug: str) -> IdentityProvider | None:
+    return PROVIDERS.get(slug)
