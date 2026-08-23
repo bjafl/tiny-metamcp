@@ -82,14 +82,14 @@ async def _list_tool_names(url: str, token: str) -> set[str]:
 async def test_mcp_tool_list_filters_private_servers_per_user(proxy_target_url, aggregator_url):
     owner_name = "mcp-integ-owner-private"
     shared_name = "mcp-integ-everyone"
-    owner_token = await access_control.generate_personal_token("mcp-integ-owner")
-    stranger_token = await access_control.generate_personal_token("mcp-integ-stranger")
+    owner_token = await access_control.generate_personal_token("github:mcp-integ-owner")
+    stranger_token = await access_control.generate_personal_token("github:mcp-integ-stranger")
 
     owner_config = await add_server(
         owner_name,
         ServerType.PROXY,
         proxy_target_url,
-        owner_username="mcp-integ-owner",
+        owner_username="github:mcp-integ-owner",
         visibility=ServerVisibility.PRIVATE.value,
     )
     shared_config = await add_server(
@@ -118,13 +118,13 @@ async def test_mcp_tool_list_filters_private_servers_per_user(proxy_target_url, 
 
 async def test_mcp_call_tool_rejects_private_server_for_non_owner(proxy_target_url, aggregator_url):
     name = "mcp-integ-call-denied"
-    stranger_token = await access_control.generate_personal_token("mcp-integ-call-stranger")
+    stranger_token = await access_control.generate_personal_token("github:mcp-integ-call-stranger")
 
     config = await add_server(
         name,
         ServerType.PROXY,
         proxy_target_url,
-        owner_username="mcp-integ-call-owner",
+        owner_username="github:mcp-integ-call-owner",
         visibility=ServerVisibility.PRIVATE.value,
     )
     await child_manager.add(config)

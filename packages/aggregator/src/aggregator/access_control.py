@@ -23,15 +23,10 @@ def is_allowed(username: str) -> bool:
     """True if a prefixed identity (e.g. "github:octocat",
     "steam:76561198012345678") is allowed to authenticate, per the
     matching provider's allowlist. Empty allowlist = unrestricted for that
-    provider. An unrecognized provider prefix is never allowed.
-
-    Non-prefixed usernames (legacy, test users) are allowed only if no
-    allowlists are configured, falling back to legacy behavior."""
+    provider. An unrecognized provider prefix is never allowed."""
     provider, sep, raw = username.partition(":")
     if not sep:
-        # Non-prefixed usernames are legacy/test usernames. Accept if no
-        # allowlists are configured (default unrestricted behavior).
-        return not GITHUB_ALLOWED_USERS and not STEAM_ALLOWED_USERS
+        return False
     if provider == "github":
         return not GITHUB_ALLOWED_USERS or raw in GITHUB_ALLOWED_USERS
     if provider == "steam":
@@ -75,8 +70,6 @@ async def generate_personal_token(username: str) -> str:
 
 async def validate_personal_token(token: str) -> str | None:
     username = await get_username_by_token_hash(_hash_token(token))
-    # For provider-prefixed identities, check the allowlist. For non-prefixed
-    # identities (e.g. test users, non-OAuth flows), accept any valid token.
-    if username and ":" in username and not is_allowed(username):
+    if username and not is_allowed(username):
         return None
     return username

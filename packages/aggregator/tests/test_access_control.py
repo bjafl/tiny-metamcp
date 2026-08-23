@@ -8,9 +8,9 @@ from aggregator import access_control
 from aggregator.database import add_server, delete_server
 from aggregator.models import ServerType, ServerVisibility
 
-ADMIN = "test-admin"  # must be in ADMIN_USERS, set by conftest.py
-OWNER = "ac-owner"
-STRANGER = "ac-stranger"
+ADMIN = "github:test-admin"  # must be in ADMIN_USERS, set by conftest.py
+OWNER = "github:ac-owner"
+STRANGER = "github:ac-stranger"
 
 
 async def _cleanup(server_id: int) -> None:

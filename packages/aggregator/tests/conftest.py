@@ -14,7 +14,7 @@ import threading
 import time
 
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="aggregator-test-data-"))
-os.environ.setdefault("ADMIN_USERS", "test-admin")
+os.environ.setdefault("ADMIN_USERS", "github:test-admin")
 
 import pytest
 

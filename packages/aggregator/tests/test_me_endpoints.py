@@ -17,8 +17,8 @@ from httpx import ASGITransport, AsyncClient
 from aggregator import access_control, admin_auth
 from aggregator.main import app
 
-ADMIN = "test-admin"  # set as ADMIN_USERS by conftest.py
-USER = "me-routes-user"
+ADMIN = "github:test-admin"  # set as ADMIN_USERS by conftest.py
+USER = "github:me-routes-user"
 
 
 def _session_cookie(username: str, display_name: str | None = None) -> str:

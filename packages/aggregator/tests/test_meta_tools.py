@@ -14,10 +14,10 @@ from aggregator import meta_tools
 from aggregator.child_manager import child_manager
 from aggregator.database import delete_server, list_servers
 
-USER = "meta-test-user"
-OWNER = "meta-owner"
-STRANGER = "meta-stranger"
-ADMIN = "test-admin"  # set as ADMIN_USERS by conftest.py
+USER = "github:meta-test-user"
+OWNER = "github:meta-owner"
+STRANGER = "github:meta-stranger"
+ADMIN = "github:test-admin"  # set as ADMIN_USERS by conftest.py
 
 
 def _payload(result: list) -> dict | list:

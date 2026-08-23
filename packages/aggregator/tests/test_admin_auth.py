@@ -76,9 +76,9 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
 
 
 async def test_require_api_auth_accepts_valid_personal_token():
-    token = await access_control.generate_personal_token("auth-test-user")
+    token = await access_control.generate_personal_token("github:auth-test-user")
     username = await require_api_auth(_request_with_headers({"authorization": f"Bearer {token}"}))
-    assert username == "auth-test-user"
+    assert username == "github:auth-test-user"
 
 
 async def test_require_api_auth_rejects_unknown_bearer_token():

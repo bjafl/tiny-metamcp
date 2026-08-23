@@ -21,9 +21,9 @@ from aggregator.child_manager import child_manager
 from aggregator.database import delete_server, list_servers
 from aggregator.log_capture import LogEntry
 
-OWNER = "router-owner"
-STRANGER = "router-stranger"
-ADMIN = "test-admin"  # set as ADMIN_USERS by conftest.py
+OWNER = "github:router-owner"
+STRANGER = "github:router-stranger"
+ADMIN = "github:test-admin"  # set as ADMIN_USERS by conftest.py
 
 
 @pytest.fixture
