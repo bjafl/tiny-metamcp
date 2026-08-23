@@ -44,7 +44,7 @@ export function AppLayout() {
           </div>
           <div className="flex items-center gap-3 text-sm text-muted-foreground">
             <ThemeToggle />
-            <span>{me?.username}</span>
+            <span>{me?.display_name ?? me?.username}</span>
             <Button
               variant="outline"
               size="sm"

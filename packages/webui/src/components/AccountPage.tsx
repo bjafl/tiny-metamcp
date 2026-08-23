@@ -15,7 +15,7 @@ export function AccountPage() {
       <div>
         <h1 className="text-xl font-semibold">My account</h1>
         <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-          <span>{me?.username}</span>
+          <span>{me?.display_name ?? me?.username}</span>
           {me?.is_admin ? <Badge>Admin</Badge> : null}
         </div>
       </div>
