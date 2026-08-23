@@ -121,6 +121,7 @@ def test_steam_provider_login_redirect_targets_steam_with_state_in_return_to():
 
 async def test_steam_provider_resolve_callback_accepts_valid_response(monkeypatch):
     monkeypatch.setattr(identity_providers, "STEAM_API_KEY", "test-key")
+    monkeypatch.setattr(identity_providers, "MCP_DOMAIN", "localhost")
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "steamcommunity.com":
@@ -163,6 +164,7 @@ async def test_steam_provider_resolve_callback_rejects_forged_response(monkeypat
     rejected -- this is what stops an attacker from forging a callback
     claiming an arbitrary SteamID."""
     monkeypatch.setattr(identity_providers, "STEAM_API_KEY", "test-key")
+    monkeypatch.setattr(identity_providers, "MCP_DOMAIN", "localhost")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="ns:http://specs.openid.net/auth/2.0\nis_valid:false\n")
@@ -186,11 +188,14 @@ async def test_steam_provider_resolve_callback_rejects_forged_response(monkeypat
 
 
 async def test_steam_provider_resolve_callback_rejects_wrong_mode(monkeypatch):
-    # Stub the http client with a handler that raises -- if the mode guard
-    # regresses, the test fails loudly instead of silently attempting a
-    # real network call.
+    # Use a call-recording stub to prove rejection happens before any network
+    # call. A raising stub would pass even if a regression accidentally
+    # reached the network (the exception would be caught and turned into None).
+    calls = []
+
     def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("should not reach network for wrong mode")
+        calls.append(request)
+        return httpx.Response(200, text="ns:http://specs.openid.net/auth/2.0\nis_valid:true\n")
 
     monkeypatch.setattr(
         identity_providers,
@@ -202,10 +207,12 @@ async def test_steam_provider_resolve_callback_rejects_wrong_mode(monkeypatch):
         _request_with_query("openid.mode=cancel")
     )
     assert result is None
+    assert calls == []  # proves rejection happened before any network call
 
 
 async def test_steam_provider_resolve_callback_falls_back_to_steamid_without_api_key(monkeypatch):
     monkeypatch.setattr(identity_providers, "STEAM_API_KEY", "")
+    monkeypatch.setattr(identity_providers, "MCP_DOMAIN", "localhost")
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.host == "steamcommunity.com"
@@ -246,9 +253,12 @@ def test_get_provider_returns_matching_provider_or_none():
 
 async def test_steam_provider_resolve_callback_rejects_malformed_claimed_id(monkeypatch):
     """A claimed_id from a different provider/domain is rejected."""
+    monkeypatch.setattr(identity_providers, "MCP_DOMAIN", "localhost")
+    calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("should not reach network for malformed claimed_id")
+        calls.append(request)
+        return httpx.Response(200, text="ns:http://specs.openid.net/auth/2.0\nis_valid:true\n")
 
     monkeypatch.setattr(
         identity_providers,
@@ -260,16 +270,21 @@ async def test_steam_provider_resolve_callback_rejects_malformed_claimed_id(monk
         _request_with_query(
             "openid.mode=id_res&openid.claimed_id="
             "https%3A%2F%2Fevil.example%2Fopenid%2Fid%2F123"
+            "&openid.return_to=https%3A%2F%2Flocalhost%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
         )
     )
     assert result is None
+    assert calls == []  # proves rejection happened before any network call
 
 
 async def test_steam_provider_resolve_callback_rejects_non_numeric_steamid(monkeypatch):
     """A claimed_id with a non-numeric SteamID is rejected."""
+    monkeypatch.setattr(identity_providers, "MCP_DOMAIN", "localhost")
+    calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("should not reach network for non-numeric SteamID")
+        calls.append(request)
+        return httpx.Response(200, text="ns:http://specs.openid.net/auth/2.0\nis_valid:true\n")
 
     monkeypatch.setattr(
         identity_providers,
@@ -281,21 +296,25 @@ async def test_steam_provider_resolve_callback_rejects_non_numeric_steamid(monke
         _request_with_query(
             "openid.mode=id_res&openid.claimed_id="
             "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2Fnot-a-number"
+            "&openid.return_to=https%3A%2F%2Flocalhost%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
         )
     )
     assert result is None
+    assert calls == []  # proves rejection happened before any network call
 
 
-async def test_steam_provider_resolve_callback_rejects_missing_signed_fields():
+async def test_steam_provider_resolve_callback_rejects_missing_signed_fields(monkeypatch):
     """A callback with claimed_id/identity missing from openid.signed is
     rejected -- this prevents an attacker from stripping fields from a
     genuine assertion before replaying it."""
+    monkeypatch.setattr(identity_providers, "MCP_DOMAIN", "localhost")
 
     result = await identity_providers.steam_provider.resolve_callback(
         _request_with_query(
             "openid.mode=id_res&openid.claimed_id="
             "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2F76561198012345678"
             "&openid.signed=mode%2Cns"  # missing claimed_id and identity
+            "&openid.return_to=https%3A%2F%2Flocalhost%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
         )
     )
     assert result is None
