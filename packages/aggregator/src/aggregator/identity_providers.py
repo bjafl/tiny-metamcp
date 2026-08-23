@@ -150,12 +150,14 @@ class SteamProvider:
             logger.warning("Steam callback: claimed_id did not contain a numeric SteamID")
             return None
 
-        # Validate that claimed_id and identity were actually signed by Steam.
-        # check_authentication proves Steam signed *some* params, but not which
-        # ones -- an attacker could strip fields from a genuine assertion.
+        # Validate that claimed_id, identity, and return_to were actually
+        # signed by Steam. check_authentication proves Steam signed *some*
+        # params, but not which ones -- an attacker could strip fields from a
+        # genuine assertion (return_to matters here too: the return_to check
+        # above is only tamper-proof if return_to is itself in this set).
         signed_fields = set(params.get("openid.signed", "").split(","))
         if not {"claimed_id", "identity", "return_to"} <= signed_fields:
-            logger.warning("Steam callback: claimed_id/identity not in signed field set")
+            logger.warning("Steam callback: claimed_id/identity/return_to not in signed field set")
             return None
 
         # The security-critical step: Steam OpenID 2.0 has no client secret,

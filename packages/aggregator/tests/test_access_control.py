@@ -151,7 +151,7 @@ def test_is_allowed_false_when_steam_not_configured_even_if_allowlisted(monkeypa
     already-issued Steam session cookies/tokens keep working after an
     operator disables Steam login."""
     monkeypatch.setattr(access_control, "STEAM_ALLOWED_USERS", {"76561198012345678"})
-    assert identity_providers.STEAM_API_KEY == ""  # genuinely unconfigured, not another test's leak
+    monkeypatch.setattr(identity_providers, "STEAM_API_KEY", "")  # genuinely unconfigured
     assert not access_control.is_allowed("steam:76561198012345678")
 
 
