@@ -96,7 +96,7 @@ async def test_mcp_tool_list_filters_private_servers_per_user(proxy_target_url, 
         shared_name,
         ServerType.PROXY,
         proxy_target_url,
-        owner_username="mcp-integ-owner",
+        owner_username="github:mcp-integ-owner",
         visibility=ServerVisibility.EVERYONE.value,
     )
     await child_manager.add(owner_config)
