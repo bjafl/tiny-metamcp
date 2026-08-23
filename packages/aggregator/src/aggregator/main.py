@@ -193,7 +193,9 @@ async def admin_logout():
 
 @app.get("/api/auth/providers")
 async def api_auth_providers():
-    return {slug: provider.is_configured() for slug, provider in identity_providers.PROVIDERS.items()}
+    return {
+        slug: provider.is_configured() for slug, provider in identity_providers.PROVIDERS.items()
+    }
 
 
 @app.get("/api/me")
