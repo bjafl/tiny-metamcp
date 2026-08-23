@@ -6,8 +6,7 @@ import urllib.parse
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from .. import admin_auth, oauth
-from ..config import GITHUB_CLIENT_ID, MCP_DOMAIN
+from .. import admin_auth, identity_providers, oauth
 
 router = APIRouter()
 
@@ -50,6 +49,15 @@ async def oauth_register(request: Request):
 # ── Authorization request ─────────────────────────────────────────────────────
 
 
+def _provider_choice_page(state: str) -> HTMLResponse:
+    links = "".join(
+        f'<p><a href="/authorize/continue?provider={html.escape(p.slug)}'
+        f'&state={urllib.parse.quote(state)}">Continue with {html.escape(p.slug.capitalize())}</a></p>'
+        for p in identity_providers.configured_providers()
+    )
+    return HTMLResponse(f"<h1>Choose a login method</h1>{links}")
+
+
 async def _authorize_handler(
     response_type: str,
     client_id: str,
@@ -69,16 +77,16 @@ async def _authorize_handler(
     if not await oauth.validate_client(client_id, redirect_uri):
         return JSONResponse({"error": "invalid_client"}, status_code=400)
 
-    github_state = oauth.start_session(client_id, redirect_uri, code_challenge, state)
-    params = urllib.parse.urlencode(
-        {
-            "client_id": GITHUB_CLIENT_ID,
-            "redirect_uri": f"https://{MCP_DOMAIN}/oauth/callback",
-            "scope": "read:user",
-            "state": github_state,
-        }
-    )
-    return RedirectResponse(f"https://github.com/login/oauth/authorize?{params}", status_code=302)
+    session_state = oauth.start_session(client_id, redirect_uri, code_challenge, state)
+    configured = identity_providers.configured_providers()
+    if not configured:
+        return JSONResponse(
+            {"error": "server_error", "error_description": "No identity provider configured"},
+            status_code=500,
+        )
+    if len(configured) == 1:
+        return configured[0].login_redirect(session_state)
+    return _provider_choice_page(session_state)
 
 
 @router.get("/authorize")
@@ -124,37 +132,64 @@ async def oauth_authorize_alias(
     )
 
 
-# ── Shared GitHub callback ────────────────────────────────────────────────────
-# Both the admin browser flow and the MCP OAuth flow redirect here.
-# The admin flow sets an `admin_oauth_state` cookie before going to GitHub,
-# which serves as the discriminator.
+@router.get("/authorize/continue")
+async def authorize_continue(provider: str = Query(...), state: str = Query(...)):
+    """Reached from the provider-choice page (only rendered when more than
+    one provider is configured) -- forwards the pending PKCE session's
+    state to whichever provider the user picked."""
+    p = identity_providers.get_provider(provider)
+    if p is None or not p.is_configured():
+        return JSONResponse(
+            {"error": "invalid_request", "error_description": "unknown or unconfigured provider"},
+            status_code=400,
+        )
+    return p.login_redirect(state)
 
 
-@router.get("/oauth/callback")
-async def oauth_callback(
-    request: Request,
-    code: str = Query(None),
-    state: str = Query(None),
-    error: str = Query(None),
-    error_description: str = Query(None),
-):
+# ── Provider callbacks ──────────────────────────────────────────────────────────
+# Both the admin browser flow and the MCP OAuth flow redirect here. The
+# admin flow sets an `admin_oauth_state` cookie before leaving for the
+# provider, which serves as the discriminator. GitHub's callback path is
+# unchanged (`/oauth/callback`) so existing OAuth App registrations don't
+# need updating; Steam gets its own new path since its callback params are
+# shaped completely differently (openid.* instead of code/state).
+
+
+async def _handle_oauth_callback(request: Request, provider: identity_providers.IdentityProvider):
     if request.cookies.get("admin_oauth_state"):
-        return await admin_auth.handle_callback(request)
+        return await admin_auth.handle_callback(request, provider)
 
-    if error or not code or not state:
-        msg = html.escape(error_description or error or "missing_code")
-        return HTMLResponse(f"<h1>OAuth error</h1><p>{msg}</p>", status_code=400)
+    state = request.query_params.get("state")
+    if not state:
+        return HTMLResponse("<h1>OAuth error</h1><p>missing_state</p>", status_code=400)
 
-    result = await oauth.finish_session(code, state)
-    if not result:
+    result = await provider.resolve_callback(request)
+    if result is None:
         return HTMLResponse(
             "<h1>Access denied</h1><p>Authentication failed or user is not authorized.</p>",
             status_code=403,
         )
 
-    auth_code, redirect_uri, client_state = result
+    finish_result = await oauth.finish_session(state, result.username)
+    if not finish_result:
+        return HTMLResponse(
+            "<h1>Access denied</h1><p>Authentication failed or user is not authorized.</p>",
+            status_code=403,
+        )
+
+    auth_code, redirect_uri, client_state = finish_result
     qs = urllib.parse.urlencode({"code": auth_code, "state": client_state})
     return RedirectResponse(f"{redirect_uri}?{qs}", status_code=302)
+
+
+@router.get("/oauth/callback")
+async def oauth_callback(request: Request):
+    return await _handle_oauth_callback(request, identity_providers.github_provider)
+
+
+@router.get("/oauth/callback/steam")
+async def oauth_callback_steam(request: Request):
+    return await _handle_oauth_callback(request, identity_providers.steam_provider)
 
 
 # ── Token endpoint ────────────────────────────────────────────────────────────
