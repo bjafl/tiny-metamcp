@@ -22,7 +22,9 @@ USER = "github:me-routes-user"
 
 
 def _session_cookie(username: str, display_name: str | None = None) -> str:
-    return admin_auth._signer.dumps({"username": username, "display_name": display_name or username})
+    return admin_auth._signer.dumps(
+        {"username": username, "display_name": display_name or username}
+    )
 
 
 @pytest.fixture

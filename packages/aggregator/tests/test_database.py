@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from aggregator.database import (
+    _migrate_identity_prefixes,
     _migrate_oauth_tokens_table,
     _migrate_server_columns,
     add_server,
@@ -239,5 +240,102 @@ async def test_migrate_oauth_tokens_table_leaves_new_shaped_table_alone(tmp_path
             result = await conn.execute(text("SELECT username FROM oauth_tokens"))
             row = result.fetchone()
         assert row == ("github:octocat",)
+    finally:
+        await engine.dispose()
+
+
+async def test_migrate_identity_prefixes_backfills_unprefixed_values(tmp_path):
+    """Pre-Steam-login deployments' servers.owner_username and
+    personal_tokens.username hold bare GitHub logins (GitHub was the only
+    provider). After upgrade the session identity is prefixed
+    ("github:octocat"), so these bare values must be backfilled with the
+    "github:" prefix or every existing owner/token holder loses access."""
+    db_path = tmp_path / "unprefixed.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE servers ("
+        "id INTEGER PRIMARY KEY, name TEXT UNIQUE, type TEXT, package TEXT, "
+        "args TEXT DEFAULT '[]', env TEXT DEFAULT '{}', enabled BOOLEAN DEFAULT 1, "
+        "owner_username TEXT, visibility TEXT DEFAULT 'everyone')"
+    )
+    conn.execute(
+        "INSERT INTO servers (name, type, package, owner_username) VALUES "
+        "('owned-server', 'proxy', 'http://x.invalid/mcp', 'octocat')"
+    )
+    conn.execute(
+        "INSERT INTO servers (name, type, package, owner_username) VALUES "
+        "('unowned-server', 'proxy', 'http://y.invalid/mcp', NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE personal_tokens ("
+        "username TEXT PRIMARY KEY, token_hash TEXT UNIQUE, created_at REAL)"
+    )
+    conn.execute(
+        "INSERT INTO personal_tokens (username, token_hash, created_at) VALUES "
+        "('octocat', 'hash-1', 0.0)"
+    )
+    conn.commit()
+    conn.close()
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    try:
+        async with engine.begin() as conn:
+            await _migrate_identity_prefixes(conn)
+
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT name, owner_username FROM servers ORDER BY name")
+            )
+            rows = dict(result.fetchall())
+            token_result = await conn.execute(text("SELECT username FROM personal_tokens"))
+            token_row = token_result.fetchone()
+        assert rows["owned-server"] == "github:octocat"
+        assert rows["unowned-server"] is None
+        assert token_row == ("github:octocat",)
+    finally:
+        await engine.dispose()
+
+
+async def test_migrate_identity_prefixes_leaves_already_prefixed_values_alone(tmp_path):
+    """A row already holding a prefixed identity (either "steam:..." from a
+    fresh Steam login, or an already-migrated "github:...") must not be
+    touched again -- the migration must not double-prefix."""
+    db_path = tmp_path / "prefixed.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE servers ("
+        "id INTEGER PRIMARY KEY, name TEXT UNIQUE, type TEXT, package TEXT, "
+        "args TEXT DEFAULT '[]', env TEXT DEFAULT '{}', enabled BOOLEAN DEFAULT 1, "
+        "owner_username TEXT, visibility TEXT DEFAULT 'everyone')"
+    )
+    conn.execute(
+        "INSERT INTO servers (name, type, package, owner_username) VALUES "
+        "('steam-owned-server', 'proxy', 'http://x.invalid/mcp', 'steam:76561198012345678')"
+    )
+    conn.execute(
+        "CREATE TABLE personal_tokens ("
+        "username TEXT PRIMARY KEY, token_hash TEXT UNIQUE, created_at REAL)"
+    )
+    conn.execute(
+        "INSERT INTO personal_tokens (username, token_hash, created_at) VALUES "
+        "('github:octocat', 'hash-1', 0.0)"
+    )
+    conn.commit()
+    conn.close()
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    try:
+        async with engine.begin() as conn:
+            await _migrate_identity_prefixes(conn)
+
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT owner_username FROM servers WHERE name='steam-owned-server'")
+            )
+            owner = result.scalar_one()
+            token_result = await conn.execute(text("SELECT username FROM personal_tokens"))
+            token_row = token_result.fetchone()
+        assert owner == "steam:76561198012345678"
+        assert token_row == ("github:octocat",)
     finally:
         await engine.dispose()

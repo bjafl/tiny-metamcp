@@ -149,7 +149,12 @@ async def test_handle_callback_rejects_state_mismatch():
         {
             "type": "http",
             "query_string": b"state=wrong-state",
-            "headers": [(b"cookie", b"admin_oauth_state=" + admin_auth._state_signer.dumps("real-state").encode())],
+            "headers": [
+                (
+                    b"cookie",
+                    b"admin_oauth_state=" + admin_auth._state_signer.dumps("real-state").encode(),
+                )
+            ],
         }
     )
     response = await admin_auth.handle_callback(request, provider)

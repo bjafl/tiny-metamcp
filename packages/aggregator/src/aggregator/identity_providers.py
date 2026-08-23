@@ -154,7 +154,7 @@ class SteamProvider:
         # check_authentication proves Steam signed *some* params, but not which
         # ones -- an attacker could strip fields from a genuine assertion.
         signed_fields = set(params.get("openid.signed", "").split(","))
-        if not {"claimed_id", "identity"} <= signed_fields:
+        if not {"claimed_id", "identity", "return_to"} <= signed_fields:
             logger.warning("Steam callback: claimed_id/identity not in signed field set")
             return None
 

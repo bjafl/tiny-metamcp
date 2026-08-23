@@ -34,7 +34,7 @@ def _load_session_payload(request: Request) -> dict | None:
         return None
     try:
         payload = _signer.loads(cookie, max_age=SESSION_MAX_AGE)
-    except (BadSignature, SignatureExpired):
+    except BadSignature, SignatureExpired:
         return None
     # Sessions issued before multi-provider support signed a plain string,
     # not a {"username", "display_name"} dict -- treat as invalid rather
@@ -113,7 +113,7 @@ async def handle_callback(request: Request, provider: IdentityProvider) -> Redir
         return _login_error("Missing state cookie — possible CSRF")
     try:
         stored_state = _state_signer.loads(state_token, max_age=STATE_MAX_AGE)
-    except (BadSignature, SignatureExpired):
+    except BadSignature, SignatureExpired:
         return _login_error("Invalid or expired state — please try again")
     request_state = request.query_params.get("state")
     if not request_state or not secrets.compare_digest(request_state, stored_state):
@@ -128,7 +128,9 @@ async def handle_callback(request: Request, provider: IdentityProvider) -> Redir
         return _login_error(f"User '{result.username}' is not authorized")
 
     logger.info("Admin login: %s", result.username)
-    session_value = _signer.dumps({"username": result.username, "display_name": result.display_name})
+    session_value = _signer.dumps(
+        {"username": result.username, "display_name": result.display_name}
+    )
     response = RedirectResponse("/admin", status_code=302)
     response.set_cookie(
         "admin_session",

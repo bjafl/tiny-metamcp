@@ -148,7 +148,7 @@ async def test_steam_provider_resolve_callback_accepts_valid_response(monkeypatc
         _request_with_query(
             "openid.mode=id_res&openid.claimed_id="
             "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2F76561198012345678"
-            "&openid.sig=abc&openid.signed=claimed_id%2Cidentity"
+            "&openid.sig=abc&openid.signed=claimed_id%2Cidentity%2Creturn_to"
             "&openid.return_to=https%3A%2F%2Flocalhost%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
             "&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
         )
@@ -179,7 +179,7 @@ async def test_steam_provider_resolve_callback_rejects_forged_response(monkeypat
         _request_with_query(
             "openid.mode=id_res&openid.claimed_id="
             "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2F76561198012345678"
-            "&openid.sig=forged&openid.signed=claimed_id%2Cidentity"
+            "&openid.sig=forged&openid.signed=claimed_id%2Cidentity%2Creturn_to"
             "&openid.return_to=https%3A%2F%2Flocalhost%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
             "&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
         )
@@ -228,7 +228,7 @@ async def test_steam_provider_resolve_callback_falls_back_to_steamid_without_api
         _request_with_query(
             "openid.mode=id_res&openid.claimed_id="
             "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2F76561198012345678"
-            "&openid.sig=abc&openid.signed=claimed_id%2Cidentity"
+            "&openid.sig=abc&openid.signed=claimed_id%2Cidentity%2Creturn_to"
             "&openid.return_to=https%3A%2F%2Flocalhost%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
             "&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
         )
@@ -318,6 +318,46 @@ async def test_steam_provider_resolve_callback_rejects_missing_signed_fields(mon
         )
     )
     assert result is None
+
+
+async def test_steam_provider_resolve_callback_rejects_signed_fields_missing_return_to(
+    monkeypatch,
+):
+    """openid.signed listing claimed_id and identity but NOT return_to must
+    be rejected -- return_to is the entire defense against replaying an
+    assertion Steam signed for a different relying party, so it's only
+    tamper-proof if return_to itself is inside the signed field set. Before
+    this fix, this case incorrectly passed the signed-fields check.
+
+    Uses a call-recording stub (like rejects_wrong_mode/
+    rejects_malformed_claimed_id above) rather than leaving
+    _steam_http_client unmocked -- an unmocked client would still return
+    None here via the generic network-exception fallback even if the
+    signed-fields check were missing entirely, which would make this test
+    pass for the wrong reason and not actually catch a regression."""
+    monkeypatch.setattr(identity_providers, "MCP_DOMAIN", "localhost")
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, text="ns:http://specs.openid.net/auth/2.0\nis_valid:true\n")
+
+    monkeypatch.setattr(
+        identity_providers,
+        "_steam_http_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10.0),
+    )
+
+    result = await identity_providers.steam_provider.resolve_callback(
+        _request_with_query(
+            "openid.mode=id_res&openid.claimed_id="
+            "https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Fid%2F76561198012345678"
+            "&openid.signed=claimed_id%2Cidentity"  # missing return_to
+            "&openid.return_to=https%3A%2F%2Flocalhost%2Foauth%2Fcallback%2Fsteam%3Fstate%3Dtest"
+        )
+    )
+    assert result is None
+    assert calls == []  # proves rejection happened before any network call
 
 
 async def test_steam_provider_resolve_callback_rejects_mismatched_return_to():

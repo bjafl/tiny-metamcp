@@ -66,12 +66,44 @@ async def _migrate_server_columns(conn: AsyncConnection) -> None:
     await conn.run_sync(_sync)
 
 
+async def _migrate_identity_prefixes(conn: AsyncConnection) -> None:
+    """Existing deployments' servers.owner_username and
+    personal_tokens.username hold bare GitHub logins (e.g. "octocat") from
+    before Steam login was added -- GitHub was the only provider, so every
+    existing identity was necessarily a GitHub identity. Backfill the
+    "github:" prefix so is_allowed()/can_manage()/_is_visible()/
+    validate_personal_token() -- which now default-deny any unprefixed
+    identity -- keep recognizing them after upgrade. Idempotent: only rows
+    whose value contains no ":" are touched, so a fresh install or an
+    already-migrated deployment is a no-op. Must run after create_all()
+    and _migrate_server_columns() -- both tables, and servers.owner_username
+    specifically, are guaranteed to exist by the time this runs."""
+
+    def _sync(sync_conn):
+        sync_conn.execute(
+            text(
+                "UPDATE servers SET owner_username = 'github:' || owner_username "
+                "WHERE owner_username IS NOT NULL AND owner_username != '' "
+                "AND instr(owner_username, ':') = 0"
+            )
+        )
+        sync_conn.execute(
+            text(
+                "UPDATE personal_tokens SET username = 'github:' || username "
+                "WHERE instr(username, ':') = 0"
+            )
+        )
+
+    await conn.run_sync(_sync)
+
+
 async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with _engine.begin() as conn:
         await _migrate_oauth_tokens_table(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
         await _migrate_server_columns(conn)
+        await _migrate_identity_prefixes(conn)
 
 
 # ── Servers ───────────────────────────────────────────────────────────────────

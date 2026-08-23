@@ -20,7 +20,9 @@ async def client():
     app = FastAPI()
     app.include_router(oauth_router)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
+    async with AsyncClient(
+        transport=transport, base_url="http://test", follow_redirects=False
+    ) as c:
         yield c
 
 
@@ -42,7 +44,9 @@ async def test_authorize_redirects_directly_when_one_provider_configured(client,
     # client's own domain before consulting the hardcoded _KNOWN_CLIENTS
     # dict -- mock it directly so this test never makes a real network call.
     monkeypatch.setattr(oauth, "validate_client", AsyncMock(return_value=True))
-    monkeypatch.setattr(identity_providers, "PROVIDERS", {"github": identity_providers.github_provider})
+    monkeypatch.setattr(
+        identity_providers, "PROVIDERS", {"github": identity_providers.github_provider}
+    )
     monkeypatch.setattr(identity_providers.github_provider, "is_configured", lambda: True)
 
     resp = await client.get("/authorize", params=_authorize_params())
@@ -97,10 +101,14 @@ async def test_oauth_callback_github_admin_flow_delegates_to_admin_auth(client, 
 
         return RedirectResponse("/admin", status_code=302)
 
-    monkeypatch.setattr("aggregator.api.oauth_router.admin_auth.handle_callback", fake_handle_callback)
+    monkeypatch.setattr(
+        "aggregator.api.oauth_router.admin_auth.handle_callback", fake_handle_callback
+    )
 
     resp = await client.get(
-        "/oauth/callback", params={"code": "abc", "state": "xyz"}, cookies={"admin_oauth_state": "present"}
+        "/oauth/callback",
+        params={"code": "abc", "state": "xyz"},
+        cookies={"admin_oauth_state": "present"},
     )
     assert resp.status_code == 302
     assert called["provider"] == "github"
@@ -108,10 +116,15 @@ async def test_oauth_callback_github_admin_flow_delegates_to_admin_auth(client, 
 
 async def test_oauth_callback_github_mcp_flow_issues_redirect_with_code(client, monkeypatch):
     monkeypatch.setattr(
-        identity_providers.github_provider, "resolve_callback",
+        identity_providers.github_provider,
+        "resolve_callback",
         AsyncMock(return_value=ProviderResult(username="github:octocat", display_name="octocat")),
     )
-    monkeypatch.setattr(oauth, "finish_session", AsyncMock(return_value=("auth-code", "https://client.example/cb", "client-state")))
+    monkeypatch.setattr(
+        oauth,
+        "finish_session",
+        AsyncMock(return_value=("auth-code", "https://client.example/cb", "client-state")),
+    )
 
     resp = await client.get("/oauth/callback", params={"code": "abc", "state": "xyz"})
     assert resp.status_code == 302
@@ -121,10 +134,15 @@ async def test_oauth_callback_github_mcp_flow_issues_redirect_with_code(client, 
 
 async def test_oauth_callback_steam_mcp_flow_issues_redirect_with_code(client, monkeypatch):
     monkeypatch.setattr(
-        identity_providers.steam_provider, "resolve_callback",
+        identity_providers.steam_provider,
+        "resolve_callback",
         AsyncMock(return_value=ProviderResult(username="steam:765", display_name="Gamer")),
     )
-    monkeypatch.setattr(oauth, "finish_session", AsyncMock(return_value=("auth-code", "https://client.example/cb", "client-state")))
+    monkeypatch.setattr(
+        oauth,
+        "finish_session",
+        AsyncMock(return_value=("auth-code", "https://client.example/cb", "client-state")),
+    )
 
     resp = await client.get("/oauth/callback/steam", params={"state": "xyz"})
     assert resp.status_code == 302

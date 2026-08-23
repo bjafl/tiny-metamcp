@@ -17,7 +17,7 @@ if $INTERACTIVE; then
     read -rp "GitHub Client ID: "                        GITHUB_CLIENT_ID
     read -rp "GitHub Client Secret: "                    GITHUB_CLIENT_SECRET
     read -rp "GitHub username(s) [comma-separated]: "    GITHUB_ALLOWED_USERS
-    read -rp "Admin GitHub username(s) [comma-separated, optional]: " ADMIN_USERS
+    read -rp "Admin identities, prefixed e.g. github:octocat [comma-separated, optional]: " ADMIN_USERS
     read -rp "Steam Web API key [optional, leave empty to skip Steam login]: " STEAM_API_KEY
     read -rp "Steam allowed SteamID64(s) [comma-separated, optional]: " STEAM_ALLOWED_USERS
     read -rp "Log level [INFO]: "                        LOG_LEVEL_INPUT
@@ -57,9 +57,8 @@ GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
 # Comma-separated list of allowed GitHub usernames. Do NOT leave empty.
 GITHUB_ALLOWED_USERS=${GITHUB_ALLOWED_USERS}
 
-# Comma-separated subset of GITHUB_ALLOWED_USERS with admin rights (see
-# and manage every server, override visibility). Optional — leave empty
-# for no admins.
+# Comma-separated list of identities with admin rights (see and manage
+# every server, override visibility). Optional — leave empty for no admins.
 # Values must be prefixed: "github:octocat" or "steam:76561198012345678".
 ADMIN_USERS=${ADMIN_USERS}
 

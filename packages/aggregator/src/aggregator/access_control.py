@@ -10,6 +10,7 @@ tool-list/dispatch handlers (aggregator.py), and the auth flows
 import hashlib
 import secrets
 
+from . import identity_providers
 from .config import ADMIN_USERS, GITHUB_ALLOWED_USERS, STEAM_ALLOWED_USERS
 from .database import (
     get_username_by_token_hash,
@@ -23,9 +24,17 @@ def is_allowed(username: str) -> bool:
     """True if a prefixed identity (e.g. "github:octocat",
     "steam:76561198012345678") is allowed to authenticate, per the
     matching provider's allowlist. Empty allowlist = unrestricted for that
-    provider. An unrecognized provider prefix is never allowed."""
+    provider. An unrecognized provider prefix is never allowed. Also false
+    if the provider itself is no longer configured -- un-configuring a
+    provider (e.g. removing STEAM_API_KEY) must revoke access already
+    granted under it, not just hide the login button, otherwise
+    already-issued session cookies/refresh tokens/personal tokens for that
+    provider keep working indefinitely."""
     provider, sep, raw = username.partition(":")
     if not sep:
+        return False
+    provider_impl = identity_providers.get_provider(provider)
+    if provider_impl is None or not provider_impl.is_configured():
         return False
     if provider == "github":
         return not GITHUB_ALLOWED_USERS or raw in GITHUB_ALLOWED_USERS

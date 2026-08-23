@@ -30,6 +30,34 @@ MCP Client (Claude Web UI, Claude Desktop, etc.)
 - **Claude Web UI** — Full OAuth 2.1 flow: discovery → dynamic client registration → PKCE authorize → provider login → token exchange. No manual token needed.
 - **Identity across providers** — a GitHub login and a Steam login are always separate identities in this system (`"github:octocat"` vs `"steam:76561198012345678"`) — there's no account linking. `ADMIN_USERS` values must include the provider prefix.
 
+## Upgrading
+
+Upgrading an existing (pre-Steam-login) deployment to a version with Steam
+login requires one manual change and involves a couple of automatic,
+one-time effects:
+
+- **`ADMIN_USERS` must be updated to the prefixed format.** An existing
+  entry like `octocat` must become `github:octocat`. This is not enforced
+  at startup — an unprefixed entry simply stops matching and silently
+  demotes that admin to a regular user, with no error logged. Update your
+  `.env` (or Coolify environment variables) before or immediately after
+  upgrading.
+- **`GITHUB_ALLOWED_USERS` is unchanged** — its values stay unprefixed raw
+  GitHub usernames, no action needed.
+- **Server ownership and personal API tokens migrate automatically.**
+  `servers.owner_username` and `personal_tokens.username` are backfilled
+  with the `github:` prefix on first startup after upgrade (every existing
+  identity was necessarily a GitHub one, since GitHub was the only
+  provider before). No manual steps needed — existing owners keep managing
+  their servers and existing personal tokens keep working.
+- **The GitHub OAuth App registration is unchanged** — the callback URL
+  (`/oauth/callback`) is the same as before, so no re-registration is
+  needed.
+- **Existing admin browser sessions will be logged out once.** Session
+  cookies issued before the upgrade predate the new cookie payload shape
+  and are treated as invalid on first visit after upgrading. Logging in
+  again resolves this — it's expected, not a bug.
+
 ## Prerequisites
 
 - Docker + Docker Compose

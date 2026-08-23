@@ -11,7 +11,9 @@ from aggregator import oauth
 
 async def test_finish_session_issues_auth_code_for_allowed_user(monkeypatch):
     monkeypatch.setattr("aggregator.oauth.access_control.is_allowed", lambda u: True)
-    state = oauth.start_session("client-1", "https://client.example/cb", "challenge", "client-state")
+    state = oauth.start_session(
+        "client-1", "https://client.example/cb", "challenge", "client-state"
+    )
     result = await oauth.finish_session(state, "github:octocat")
     assert result is not None
     code, redirect_uri, client_state = result
@@ -21,7 +23,9 @@ async def test_finish_session_issues_auth_code_for_allowed_user(monkeypatch):
 
 async def test_finish_session_rejects_disallowed_user(monkeypatch):
     monkeypatch.setattr("aggregator.oauth.access_control.is_allowed", lambda u: False)
-    state = oauth.start_session("client-1", "https://client.example/cb", "challenge", "client-state")
+    state = oauth.start_session(
+        "client-1", "https://client.example/cb", "challenge", "client-state"
+    )
     result = await oauth.finish_session(state, "github:not-allowed")
     assert result is None
 
@@ -60,7 +64,9 @@ async def test_exchange_code_rejects_pkce_mismatch(monkeypatch):
     finish_result = await oauth.finish_session(state, "github:octocat")
     code, _, _ = finish_result
 
-    result = await oauth.exchange_code(code, "wrong-verifier", "client-1", "https://client.example/cb")
+    result = await oauth.exchange_code(
+        code, "wrong-verifier", "client-1", "https://client.example/cb"
+    )
     assert result is None
 
 

@@ -4,7 +4,7 @@ access_control.py -- the single module every other access-control
 enforcement point (meta_tools, routers, /mcp) delegates to.
 """
 
-from aggregator import access_control
+from aggregator import access_control, identity_providers
 from aggregator.database import add_server, delete_server
 from aggregator.models import ServerType, ServerVisibility
 
@@ -133,13 +133,26 @@ def test_is_allowed_true_for_github_user_when_allowlist_empty(monkeypatch):
 
 
 def test_is_allowed_true_for_steam_user_in_allowlist(monkeypatch):
+    monkeypatch.setattr(identity_providers, "STEAM_API_KEY", "test-steam-key")
     monkeypatch.setattr(access_control, "STEAM_ALLOWED_USERS", {"76561198012345678"})
     assert access_control.is_allowed("steam:76561198012345678")
 
 
 def test_is_allowed_false_for_steam_user_not_in_allowlist(monkeypatch):
+    monkeypatch.setattr(identity_providers, "STEAM_API_KEY", "test-steam-key")
     monkeypatch.setattr(access_control, "STEAM_ALLOWED_USERS", {"76561198012345678"})
     assert not access_control.is_allowed("steam:99999999999999999")
+
+
+def test_is_allowed_false_when_steam_not_configured_even_if_allowlisted(monkeypatch):
+    """Un-configuring Steam (no STEAM_API_KEY) must revoke access even for a
+    user still present in STEAM_ALLOWED_USERS -- the allowlist alone must
+    not be sufficient once the provider itself is disabled, otherwise
+    already-issued Steam session cookies/tokens keep working after an
+    operator disables Steam login."""
+    monkeypatch.setattr(access_control, "STEAM_ALLOWED_USERS", {"76561198012345678"})
+    assert identity_providers.STEAM_API_KEY == ""  # genuinely unconfigured, not another test's leak
+    assert not access_control.is_allowed("steam:76561198012345678")
 
 
 def test_is_allowed_false_for_unknown_provider_prefix():
