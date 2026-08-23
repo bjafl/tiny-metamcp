@@ -1,14 +1,19 @@
 """
-OAuth 2.1 + PKCE authorization server backed by GitHub OAuth.
+OAuth 2.1 + PKCE authorization server for MCP clients, backed by any
+configured identity provider (identity_providers.py -- currently GitHub
+and Steam).
 
 Flow for Claude Web UI connectors:
   1. /mcp returns 401 + WWW-Authenticate pointing at /.well-known/oauth-protected-resource
   2. Claude fetches discovery documents (/.well-known/oauth-authorization-server)
   3. Claude sends user to /authorize (PKCE + CIMD client_id)
-  4. We redirect user to GitHub
-  5. GitHub redirects to /oauth/callback
-  6. We exchange GitHub code, validate user, issue auth code
-  7. We redirect to client redirect_uri with auth code
+  4. We redirect the user to the configured identity provider (or a
+     provider-choice page if more than one is configured)
+  5. The provider redirects to /oauth/callback (GitHub) or
+     /oauth/callback/steam
+  6. We resolve the identity via the provider, validate it's allowed, issue
+     an internal auth code
+  7. We redirect to client redirect_uri with the auth code
   8. Claude POSTs to /token with code + code_verifier
   9. We verify PKCE, issue access_token + refresh_token
 """
@@ -23,13 +28,8 @@ from dataclasses import dataclass
 import aiosqlite
 import httpx
 
-from .config import (
-    DB_PATH,
-    GITHUB_ALLOWED_USERS,
-    GITHUB_CLIENT_ID,
-    GITHUB_CLIENT_SECRET,
-    MCP_DOMAIN,
-)
+from . import access_control
+from .config import DB_PATH, MCP_DOMAIN
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +55,11 @@ class _AuthCode:
     client_id: str
     redirect_uri: str
     code_challenge: str
-    github_user: str
+    username: str
     expires_at: float
 
 
-_sessions: dict[str, _Session] = {}  # github_state → _Session
+_sessions: dict[str, _Session] = {}  # oauth_state → _Session
 _codes: dict[str, _AuthCode] = {}  # our_code → _AuthCode
 
 
@@ -128,61 +128,33 @@ async def validate_client(client_id: str, redirect_uri: str) -> bool:
 
 
 def start_session(client_id: str, redirect_uri: str, code_challenge: str, client_state: str) -> str:
-    """Store pending OAuth session. Returns github_state to embed in GitHub redirect."""
+    """Store pending OAuth session. Returns oauth_state to pass to identity provider."""
     _gc()
-    github_state = secrets.token_urlsafe(32)
-    _sessions[github_state] = _Session(
+    oauth_state = secrets.token_urlsafe(32)
+    _sessions[oauth_state] = _Session(
         client_state=client_state,
         client_id=client_id,
         redirect_uri=redirect_uri,
         code_challenge=code_challenge,
         expires_at=time.time() + SESSION_TTL,
     )
-    return github_state
+    return oauth_state
 
 
-async def finish_session(github_code: str, github_state: str) -> tuple[str, str, str] | None:
+async def finish_session(oauth_state: str, username: str) -> tuple[str, str, str] | None:
     """
-    Exchange GitHub code, validate user, issue auth code.
-    Returns (auth_code, client_redirect_uri, client_state) or None on any failure.
+    Given an already-resolved identity (from an IdentityProvider's
+    resolve_callback), validate it's allowed and issue an internal auth
+    code. Returns (auth_code, client_redirect_uri, client_state) or None on
+    any failure.
     """
-    session = _sessions.pop(github_state, None)
+    session = _sessions.pop(oauth_state, None)
     if not session or session.expires_at < time.time():
-        logger.warning("OAuth: unknown or expired state %s", github_state[:8])
+        logger.warning("OAuth: unknown or expired state %s", oauth_state[:8])
         return None
 
-    # Exchange GitHub authorization code for user identity
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as h:
-            r = await h.post(
-                "https://github.com/login/oauth/access_token",
-                data={
-                    "client_id": GITHUB_CLIENT_ID,
-                    "client_secret": GITHUB_CLIENT_SECRET,
-                    "code": github_code,
-                },
-                headers={"Accept": "application/json"},
-            )
-            r.raise_for_status()
-            gh_token = r.json().get("access_token")
-            if not gh_token:
-                logger.warning("GitHub returned no access_token: %s", r.json())
-                return None
-            u = await h.get(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {gh_token}",
-                    "Accept": "application/vnd.github+json",
-                },
-            )
-            u.raise_for_status()
-            github_user: str = u.json().get("login", "")
-    except Exception as exc:
-        logger.warning("GitHub exchange error: %s", exc)
-        return None
-
-    if GITHUB_ALLOWED_USERS and github_user not in GITHUB_ALLOWED_USERS:
-        logger.warning("OAuth rejected: %s not in GITHUB_ALLOWED_USERS", github_user)
+    if not access_control.is_allowed(username):
+        logger.warning("OAuth rejected: %s not allowed", username)
         return None
 
     _gc()
@@ -191,10 +163,10 @@ async def finish_session(github_code: str, github_state: str) -> tuple[str, str,
         client_id=session.client_id,
         redirect_uri=session.redirect_uri,
         code_challenge=session.code_challenge,
-        github_user=github_user,
+        username=username,
         expires_at=time.time() + AUTH_CODE_TTL,
     )
-    logger.info("OAuth: auth code issued for %s (client=%s)", github_user, session.client_id)
+    logger.info("OAuth: auth code issued for %s (client=%s)", username, session.client_id)
     return code, session.redirect_uri, session.client_state
 
 
@@ -215,9 +187,9 @@ async def exchange_code(
 
     access = secrets.token_urlsafe(48)
     refresh = secrets.token_urlsafe(48)
-    await _store_token(access, "access", code_obj.github_user, client_id, ACCESS_TOKEN_TTL)
-    await _store_token(refresh, "refresh", code_obj.github_user, client_id, REFRESH_TOKEN_TTL)
-    logger.info("OAuth: tokens issued for %s", code_obj.github_user)
+    await _store_token(access, "access", code_obj.username, client_id, ACCESS_TOKEN_TTL)
+    await _store_token(refresh, "refresh", code_obj.username, client_id, REFRESH_TOKEN_TTL)
+    logger.info("OAuth: tokens issued for %s", code_obj.username)
     return access, refresh
 
 
@@ -225,31 +197,31 @@ async def rotate_refresh(refresh_token: str) -> tuple[str, str] | None:
     """Validate refresh token, rotate to new (access_token, refresh_token)."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT github_user, client_id FROM oauth_tokens "
+            "SELECT username, client_id FROM oauth_tokens "
             "WHERE token=? AND token_type='refresh' AND expires_at>?",
             (refresh_token, time.time()),
         ) as cur:
             row = await cur.fetchone()
         if not row:
             return None
-        github_user, client_id = row
+        username, client_id = row
         await db.execute("DELETE FROM oauth_tokens WHERE token=?", (refresh_token,))
         await db.commit()
 
     access = secrets.token_urlsafe(48)
     refresh = secrets.token_urlsafe(48)
-    await _store_token(access, "access", github_user, client_id, ACCESS_TOKEN_TTL)
-    await _store_token(refresh, "refresh", github_user, client_id, REFRESH_TOKEN_TTL)
-    logger.info("OAuth: tokens rotated for %s", github_user)
+    await _store_token(access, "access", username, client_id, ACCESS_TOKEN_TTL)
+    await _store_token(refresh, "refresh", username, client_id, REFRESH_TOKEN_TTL)
+    logger.info("OAuth: tokens rotated for %s", username)
     return access, refresh
 
 
 async def validate_bearer(token: str) -> str | None:
-    """Return github_user if token is a valid OAuth access token, else None."""
+    """Return the resolved username if token is a valid OAuth access token, else None."""
     async with (
         aiosqlite.connect(DB_PATH) as db,
         db.execute(
-            "SELECT github_user FROM oauth_tokens "
+            "SELECT username FROM oauth_tokens "
             "WHERE token=? AND token_type='access' AND expires_at>?",
             (token, time.time()),
         ) as cur,
@@ -265,14 +237,14 @@ async def cleanup_expired() -> None:
 
 
 async def _store_token(
-    token: str, token_type: str, github_user: str, client_id: str, ttl: int
+    token: str, token_type: str, username: str, client_id: str, ttl: int
 ) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT OR REPLACE INTO oauth_tokens "
-            "(token, token_type, github_user, client_id, expires_at, created_at) "
+            "(token, token_type, username, client_id, expires_at, created_at) "
             "VALUES (?,?,?,?,?,?)",
-            (token, token_type, github_user, client_id, time.time() + ttl, time.time()),
+            (token, token_type, username, client_id, time.time() + ttl, time.time()),
         )
         await db.commit()
 
