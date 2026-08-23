@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from aggregator.database import (
+    _migrate_oauth_tokens_table,
     _migrate_server_columns,
     add_server,
     delete_server,
@@ -170,5 +171,73 @@ async def test_migrate_server_columns_backfills_legacy_table(tmp_path):
             )
             row = result.fetchone()
         assert row == (None, "everyone")
+    finally:
+        await engine.dispose()
+
+
+async def test_migrate_oauth_tokens_table_drops_legacy_shaped_table(tmp_path):
+    """oauth_tokens.github_user was renamed to `username` when Steam login
+    was added. These are short-lived (<=30 day) session/refresh tokens, not
+    durable data, so the migration just drops a legacy-shaped table -- the
+    subsequent create_all() in init_db() recreates it with the new schema.
+    Verified here against a standalone legacy-shaped DB file, matching the
+    pattern _migrate_server_columns's own test already uses."""
+    db_path = tmp_path / "legacy_oauth.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE oauth_tokens ("
+        "token TEXT PRIMARY KEY, token_type TEXT, github_user TEXT, "
+        "client_id TEXT, expires_at REAL, created_at REAL)"
+    )
+    conn.execute(
+        "INSERT INTO oauth_tokens VALUES "
+        "('tok', 'access', 'octocat', 'client-1', 9999999999.0, 0.0)"
+    )
+    conn.commit()
+    conn.close()
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    try:
+        async with engine.begin() as conn:
+            await _migrate_oauth_tokens_table(conn)
+
+        def _table_exists(sync_conn) -> bool:
+            from sqlalchemy import inspect
+
+            return "oauth_tokens" in inspect(sync_conn).get_table_names()
+
+        async with engine.connect() as conn:
+            exists = await conn.run_sync(_table_exists)
+        assert not exists  # dropped; create_all() would recreate it fresh
+    finally:
+        await engine.dispose()
+
+
+async def test_migrate_oauth_tokens_table_leaves_new_shaped_table_alone(tmp_path):
+    """A table that already has the new `username` column (or no table at
+    all -- a fresh install) must not be touched."""
+    db_path = tmp_path / "current_oauth.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE oauth_tokens ("
+        "token TEXT PRIMARY KEY, token_type TEXT, username TEXT, "
+        "client_id TEXT, expires_at REAL, created_at REAL)"
+    )
+    conn.execute(
+        "INSERT INTO oauth_tokens VALUES "
+        "('tok', 'access', 'github:octocat', 'client-1', 9999999999.0, 0.0)"
+    )
+    conn.commit()
+    conn.close()
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    try:
+        async with engine.begin() as conn:
+            await _migrate_oauth_tokens_table(conn)
+
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SELECT username FROM oauth_tokens"))
+            row = result.fetchone()
+        assert row == ("github:octocat",)
     finally:
         await engine.dispose()

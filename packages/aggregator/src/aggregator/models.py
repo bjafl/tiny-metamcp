@@ -46,7 +46,7 @@ class OAuthToken(SQLModel, table=True):
 
     token: str = Field(primary_key=True)
     token_type: str
-    github_user: str
+    username: str
     client_id: str
     expires_at: float
     created_at: float = Field(default_factory=_time.time)

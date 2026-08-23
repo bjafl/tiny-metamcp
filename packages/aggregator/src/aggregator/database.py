@@ -26,6 +26,29 @@ _session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
 )
 
 
+async def _migrate_oauth_tokens_table(conn: AsyncConnection) -> None:
+    """oauth_tokens.github_user was renamed to `username` when Steam login
+    was added (it now holds a prefixed identity like "github:octocat" or
+    "steam:76561198012345678", not just a GitHub login). These rows are
+    short-lived session/refresh tokens (<=30 day TTL, already pruned by
+    oauth.cleanup_expired()) -- not durable data worth writing a real
+    column-rename migration for. On upgrade, a legacy-shaped table is
+    dropped here, *before* create_all() runs in init_db(), so create_all()
+    sees no table and recreates it fresh with the new schema. Any MCP
+    client with an active session at upgrade time simply redoes OAuth once.
+    """
+
+    def _sync(sync_conn):
+        inspector = inspect(sync_conn)
+        if "oauth_tokens" not in inspector.get_table_names():
+            return
+        existing = {col["name"] for col in inspector.get_columns("oauth_tokens")}
+        if "github_user" in existing and "username" not in existing:
+            sync_conn.execute(text("DROP TABLE oauth_tokens"))
+
+    await conn.run_sync(_sync)
+
+
 async def _migrate_server_columns(conn: AsyncConnection) -> None:
     """Add columns introduced after a deployment's `servers` table was first
     created -- `SQLModel.metadata.create_all` only creates missing tables,
@@ -46,6 +69,7 @@ async def _migrate_server_columns(conn: AsyncConnection) -> None:
 async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with _engine.begin() as conn:
+        await _migrate_oauth_tokens_table(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
         await _migrate_server_columns(conn)
 
