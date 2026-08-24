@@ -152,6 +152,25 @@ just against SQLite instead of a Python set. Given this is a self-hosted,
 low-QPS MCP proxy, the extra per-request SQLite read is not treated as a
 performance concern; no caching layer is introduced.
 
+**Documented behavior change: per-request "is the provider still
+configured" revocation no longer applies at the session/token level.**
+Today, `is_allowed()` re-checks `provider_impl.is_configured()` on every
+request, so un-configuring a provider (e.g. removing `STEAM_API_KEY`)
+immediately kills every standing session/token tied to that provider. A
+canonical `"user:<id>"` session carries no record of which provider it was
+established through, so that specific mechanism can no longer be expressed
+once accounts can be reached via more than one identity. The replacement:
+`resolve_login` still refuses a **new** login attempt through a
+currently-unconfigured provider (checked per attempt, same as today), and
+un-configuring a provider still means no one can **link** it going
+forward — but an already-authenticated session/token for an account that
+also has another, still-configured identity linked keeps working, since
+the account itself was never the thing that got disabled. An operator who
+wants to fully cut a specific person off should use the account-level
+`allowed` toggle (see "Admin webui" below) — that check still runs on
+every request, exactly as before, just keyed to the account instead of to
+a single provider identity.
+
 ## Account linking (self-service)
 
 New Account-page UI: a "Link GitHub" / "Link Steam" button per configured
