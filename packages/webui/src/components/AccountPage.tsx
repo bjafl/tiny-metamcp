@@ -5,6 +5,7 @@ import { useAuthProviders } from "@/hooks/useAuthProviders";
 import { useGenerateToken } from "@/hooks/useToken";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { accountRoute } from "@/router";
 
 const PROVIDER_LABELS: Record<string, string> = {
   github: "GitHub",
@@ -12,6 +13,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 export function AccountPage() {
+  const { link_error } = accountRoute.useSearch();
   const { data: me } = useMe();
   const { data: providers } = useAuthProviders();
   const unlinkIdentity = useUnlinkIdentity();
@@ -38,6 +40,7 @@ export function AccountPage() {
         <p className="text-sm text-muted-foreground">
           Sign in with either linked identity — they reach the same account.
         </p>
+        {link_error ? <p className="text-sm text-destructive">{link_error}</p> : null}
         <ul className="space-y-1">
           {(me?.identities ?? []).map((identity) => (
             <li key={identity.id} className="flex items-center justify-between text-sm">

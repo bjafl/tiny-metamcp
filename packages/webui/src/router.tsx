@@ -66,6 +66,9 @@ export const testerRoute = createRoute({
 export const accountRoute = createRoute({
   getParentRoute: () => authedLayoutRoute,
   path: "/account",
+  validateSearch: (search: Record<string, unknown>): { link_error?: string } => ({
+    link_error: typeof search.link_error === "string" ? search.link_error : undefined,
+  }),
   component: AccountPage,
 });
 
