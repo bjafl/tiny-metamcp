@@ -25,7 +25,7 @@ MCP Client (Claude Web UI, Claude Desktop, etc.)
 ```
 
 **Auth model:**
-- **Browser → `/admin`, `/api`** — GitHub or Steam login via signed session cookies (whichever is configured; both may be enabled at once). Only allowed identities (`GITHUB_ALLOWED_USERS` / `STEAM_ALLOWED_USERS`) get in.
+- **Browser → `/admin`, `/api`** — GitHub or Steam login via signed session cookies (whichever is configured; both may be enabled at once). Only allowed identities get in (managed from the admin Users page; `GITHUB_ALLOWED_USERS`/`STEAM_ALLOWED_USERS` only seed this once on first startup — see Upgrading).
 - **MCP client → `/mcp`** — OAuth 2.1 + PKCE (Claude Web UI connectors, choosing a provider if more than one is configured) or a personal API token (Claude Desktop etc. — generate one from the webui's Account page after logging in).
 - **Claude Web UI** — Full OAuth 2.1 flow: discovery → dynamic client registration → PKCE authorize → provider login → token exchange. No manual token needed.
 - **Identity across providers** — a GitHub login and a Steam login are separate identities by default (`"github:octocat"` vs `"steam:76561198012345678"`), reachable as the same account only once explicitly linked (see below). `ADMIN_USERS` values must include the provider prefix.
@@ -187,7 +187,7 @@ Go to `https://<MCP_DOMAIN>/admin` — sign in with GitHub or Steam (whichever i
 - **MCP Servers** — add, edit, enable/disable, restart, and delete servers
 - **Logs** — view aggregator logs and child process stderr in real time (live SSE stream)
 - **Tool Tester** — select a running server and tool, fill in JSON arguments, and call it directly
-- **Account** — view your username/admin status, generate a personal API token for MCP clients (Claude Desktop etc.)
+- **Account** — view your username/admin status, generate a personal API token for MCP clients (Claude Desktop etc.), and view/link/unlink your GitHub and Steam identities
 
 ### User management (admins)
 

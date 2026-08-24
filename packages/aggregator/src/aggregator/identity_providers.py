@@ -4,7 +4,7 @@ flow and oauth.py's MCP OAuth 2.1 + PKCE flow. Each provider resolves a
 callback request to a prefixed identity string ("github:octocat",
 "steam:76561198012345678") -- callers never see provider-specific request
 shapes, and neither provider knows about allowlists (see
-access_control.is_allowed).
+access_control.resolve_login).
 """
 
 import logging
