@@ -98,6 +98,28 @@ async def token_for():
     return _make
 
 
+@pytest.fixture
+async def make_user():
+    """Factory fixture: `owner = await make_user("router-owner")` (or
+    `admin = await make_user("test-admin", is_admin=True)`) creates a real
+    User + UserIdentity by driving access_control.resolve_login's
+    auto-provisioning path -- the same code a real first login exercises
+    -- and returns the canonical "user:<id>" identity. Optionally promotes
+    to admin afterward via a direct database call (resolve_login's own
+    grant_admin path is reachable only via an AllowedIdentity row, more
+    indirection than most tests need)."""
+    from aggregator import access_control, database
+
+    async def _make(raw_id: str, *, is_admin: bool = False, provider: str = "github") -> str:
+        canonical = await access_control.resolve_login(provider, raw_id, raw_id)
+        if is_admin:
+            user_id = int(canonical.removeprefix("user:"))
+            await database.update_user_flags(user_id, is_admin=True)
+        return canonical
+
+    return _make
+
+
 @pytest.fixture(autouse=True)
 async def _clean_child_manager():
     """Every test starts and ends with no children registered, so a leaked

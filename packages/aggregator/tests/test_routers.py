@@ -21,10 +21,6 @@ from aggregator.child_manager import child_manager
 from aggregator.database import delete_server, list_servers
 from aggregator.log_capture import LogEntry
 
-OWNER = "github:router-owner"
-STRANGER = "github:router-stranger"
-ADMIN = "github:test-admin"  # set as ADMIN_USERS by conftest.py
-
 
 @pytest.fixture
 async def client():
@@ -36,20 +32,35 @@ async def client():
 
 
 @pytest.fixture
-async def auth_headers(token_for):
-    token = await token_for(OWNER)
+async def owner(make_user):
+    return await make_user("router-owner")
+
+
+@pytest.fixture
+async def stranger(make_user):
+    return await make_user("router-stranger")
+
+
+@pytest.fixture
+async def admin(make_user):
+    return await make_user("test-admin", is_admin=True)
+
+
+@pytest.fixture
+async def auth_headers(token_for, owner):
+    token = await token_for(owner)
     return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
-async def stranger_headers(token_for):
-    token = await token_for(STRANGER)
+async def stranger_headers(token_for, stranger):
+    token = await token_for(stranger)
     return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
-async def admin_headers(token_for):
-    token = await token_for(ADMIN)
+async def admin_headers(token_for, admin):
+    token = await token_for(admin)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -331,7 +342,7 @@ async def test_patch_git_to_non_git_type_change_uninstalls_old_checkout(
 # ── Visibility / ownership scoping ────────────────────────────────────────────
 
 
-async def test_add_server_defaults_to_private_and_records_owner(client, auth_headers):
+async def test_add_server_defaults_to_private_and_records_owner(client, auth_headers, owner):
     name = "router-visibility-default"
     try:
         added = await client.post(
@@ -341,7 +352,7 @@ async def test_add_server_defaults_to_private_and_records_owner(client, auth_hea
         )
         body = added.json()["server"]
         assert body["visibility"] == "private"
-        assert body["owner"] == OWNER
+        assert body["owner"] == owner
     finally:
         await _cleanup_by_name(name)
 
