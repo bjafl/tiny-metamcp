@@ -1,55 +1,80 @@
 """
 Unit tests for the visibility/ownership/personal-token rules in
 access_control.py -- the single module every other access-control
-enforcement point (meta_tools, routers, /mcp) delegates to.
+enforcement point (meta_tools, routers, /mcp) delegates to. These
+tests exercise the DB-backed User/UserIdentity model via resolve_login,
+not raw env-var-backed prefixed strings.
 """
 
 from aggregator import access_control, database, identity_providers
 from aggregator.database import add_server, delete_server
 from aggregator.models import ServerType, ServerVisibility
 
-ADMIN = "github:test-admin"  # must be in ADMIN_USERS, set by conftest.py
-OWNER = "github:ac-owner"
-STRANGER = "github:ac-stranger"
-
 
 async def _cleanup(server_id: int) -> None:
     await delete_server(server_id)
 
 
-def test_is_admin_true_only_for_admin_users_env():
-    assert access_control.is_admin(ADMIN)
-    assert not access_control.is_admin(OWNER)
+async def _make_user(raw_id: str, *, is_admin: bool = False, provider: str = "github") -> str:
+    """Test helper: create a real User + UserIdentity via the same
+    resolve_login() auto-provisioning path a real first login exercises,
+    optionally promoting it to admin afterward. Returns the canonical
+    "user:<id>" identity."""
+    canonical = await access_control.resolve_login(provider, raw_id, raw_id)
+    if is_admin:
+        user_id = int(canonical.removeprefix("user:"))
+        await database.update_user_flags(user_id, is_admin=True)
+    return canonical
+
+
+async def test_is_admin_true_only_for_admin_user():
+    admin = await _make_user("is-admin-test-admin", is_admin=True)
+    regular = await _make_user("is-admin-test-regular")
+    assert await access_control.is_admin(admin)
+    assert not await access_control.is_admin(regular)
+
+
+async def test_is_admin_false_when_account_disabled():
+    admin = await _make_user("is-admin-disabled-test", is_admin=True)
+    user_id = int(admin.removeprefix("user:"))
+    await database.update_user_flags(user_id, allowed=False)
+    assert not await access_control.is_admin(admin)
 
 
 async def test_can_manage_true_for_owner_and_admin_false_for_stranger():
+    owner = await _make_user("can-manage-owner")
+    admin = await _make_user("can-manage-admin", is_admin=True)
+    stranger = await _make_user("can-manage-stranger")
     server = await add_server(
         "ac-can-manage",
         ServerType.PROXY,
         "http://x.invalid/mcp",
-        owner_username=OWNER,
+        owner_username=owner,
         visibility=ServerVisibility.PRIVATE.value,
     )
     try:
-        assert access_control.can_manage(server, OWNER)
-        assert access_control.can_manage(server, ADMIN)
-        assert not access_control.can_manage(server, STRANGER)
+        assert await access_control.can_manage(server, owner)
+        assert await access_control.can_manage(server, admin)
+        assert not await access_control.can_manage(server, stranger)
     finally:
         await _cleanup(server.id)
 
 
 async def test_visible_servers_private_only_to_owner_and_admin():
+    owner = await _make_user("visible-private-owner")
+    admin = await _make_user("visible-private-admin", is_admin=True)
+    stranger = await _make_user("visible-private-stranger")
     server = await add_server(
         "ac-visible-private",
         ServerType.PROXY,
         "http://x.invalid/mcp",
-        owner_username=OWNER,
+        owner_username=owner,
         visibility=ServerVisibility.PRIVATE.value,
     )
     try:
-        owner_names = {s.name for s in await access_control.visible_servers(OWNER)}
-        admin_names = {s.name for s in await access_control.visible_servers(ADMIN)}
-        stranger_names = {s.name for s in await access_control.visible_servers(STRANGER)}
+        owner_names = {s.name for s in await access_control.visible_servers(owner)}
+        admin_names = {s.name for s in await access_control.visible_servers(admin)}
+        stranger_names = {s.name for s in await access_control.visible_servers(stranger)}
         assert server.name in owner_names
         assert server.name in admin_names
         assert server.name not in stranger_names
@@ -58,109 +83,67 @@ async def test_visible_servers_private_only_to_owner_and_admin():
 
 
 async def test_visible_servers_everyone_visible_to_all():
+    owner = await _make_user("visible-everyone-owner")
+    stranger = await _make_user("visible-everyone-stranger")
     server = await add_server(
         "ac-visible-everyone",
         ServerType.PROXY,
         "http://x.invalid/mcp",
-        owner_username=OWNER,
+        owner_username=owner,
         visibility=ServerVisibility.EVERYONE.value,
     )
     try:
-        stranger_names = {s.name for s in await access_control.visible_servers(STRANGER)}
+        stranger_names = {s.name for s in await access_control.visible_servers(stranger)}
         assert server.name in stranger_names
     finally:
         await _cleanup(server.id)
 
 
 async def test_visible_server_names_matches_visible_servers():
+    owner = await _make_user("visible-names-owner")
+    stranger = await _make_user("visible-names-stranger")
     server = await add_server(
         "ac-visible-names",
         ServerType.PROXY,
         "http://x.invalid/mcp",
-        owner_username=OWNER,
+        owner_username=owner,
         visibility=ServerVisibility.EVERYONE.value,
     )
     try:
-        names = await access_control.visible_server_names(STRANGER)
+        names = await access_control.visible_server_names(stranger)
         assert server.name in names
     finally:
         await _cleanup(server.id)
 
 
 async def test_generate_and_validate_personal_token_round_trip():
-    token = await access_control.generate_personal_token("github:token-user")
-    assert await access_control.validate_personal_token(token) == "github:token-user"
+    user = await _make_user("token-round-trip-user")
+    token = await access_control.generate_personal_token(user)
+    assert await access_control.validate_personal_token(token) == user
 
 
 async def test_regenerating_token_invalidates_previous_one():
-    old_token = await access_control.generate_personal_token("github:token-user-2")
-    new_token = await access_control.generate_personal_token("github:token-user-2")
+    user = await _make_user("token-regen-user")
+    old_token = await access_control.generate_personal_token(user)
+    new_token = await access_control.generate_personal_token(user)
     assert await access_control.validate_personal_token(old_token) is None
-    assert await access_control.validate_personal_token(new_token) == "github:token-user-2"
+    assert await access_control.validate_personal_token(new_token) == user
 
 
 async def test_validate_personal_token_unknown_token_returns_none():
     assert await access_control.validate_personal_token("not-a-real-token") is None
 
 
-async def test_validate_personal_token_rejects_deprovisioned_user(monkeypatch):
-    """A personal token must stop working once its owner is removed from
-    GITHUB_ALLOWED_USERS -- the token store alone must not keep a
-    deprovisioned user's access alive (mirrors admin_auth.get_session_user's
-    same allowlist check for the session-cookie path)."""
-    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", {ADMIN})
-
-    deprovisioned_token = await access_control.generate_personal_token("github:token-user-3")
-    assert await access_control.validate_personal_token(deprovisioned_token) is None
-
-    admin_token = await access_control.generate_personal_token(f"github:{ADMIN}")
-    assert await access_control.validate_personal_token(admin_token) == f"github:{ADMIN}"
-
-
-def test_is_allowed_true_for_github_user_in_allowlist(monkeypatch):
-    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", {"octocat"})
-    assert access_control.is_allowed("github:octocat")
-
-
-def test_is_allowed_false_for_github_user_not_in_allowlist(monkeypatch):
-    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", {"octocat"})
-    assert not access_control.is_allowed("github:someone-else")
-
-
-def test_is_allowed_true_for_github_user_when_allowlist_empty(monkeypatch):
-    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", set())
-    assert access_control.is_allowed("github:anyone")
-
-
-def test_is_allowed_true_for_steam_user_in_allowlist(monkeypatch):
-    monkeypatch.setattr(identity_providers, "STEAM_API_KEY", "test-steam-key")
-    monkeypatch.setattr(access_control, "STEAM_ALLOWED_USERS", {"76561198012345678"})
-    assert access_control.is_allowed("steam:76561198012345678")
-
-
-def test_is_allowed_false_for_steam_user_not_in_allowlist(monkeypatch):
-    monkeypatch.setattr(identity_providers, "STEAM_API_KEY", "test-steam-key")
-    monkeypatch.setattr(access_control, "STEAM_ALLOWED_USERS", {"76561198012345678"})
-    assert not access_control.is_allowed("steam:99999999999999999")
-
-
-def test_is_allowed_false_when_steam_not_configured_even_if_allowlisted(monkeypatch):
-    """Un-configuring Steam (no STEAM_API_KEY) must revoke access even for a
-    user still present in STEAM_ALLOWED_USERS -- the allowlist alone must
-    not be sufficient once the provider itself is disabled, otherwise
-    already-issued Steam session cookies/tokens keep working after an
-    operator disables Steam login."""
-    monkeypatch.setattr(access_control, "STEAM_ALLOWED_USERS", {"76561198012345678"})
-    monkeypatch.setattr(identity_providers, "STEAM_API_KEY", "")  # genuinely unconfigured
-    assert not access_control.is_allowed("steam:76561198012345678")
-
-
-def test_is_allowed_false_for_unknown_provider_prefix():
-    assert not access_control.is_allowed("discord:someone")
-
-
-def test_is_allowed_false_for_unprefixed_username():
-    assert not access_control.is_allowed("octocat")
+async def test_validate_personal_token_rejects_disabled_user():
+    """A personal token must stop working once its owner's account is
+    disabled -- the token store alone must not keep a revoked user's
+    access alive (mirrors admin_auth.get_session_user's same check for the
+    session-cookie path)."""
+    user = await _make_user("token-disabled-user")
+    token = await access_control.generate_personal_token(user)
+    user_id = int(user.removeprefix("user:"))
+    await database.update_user_flags(user_id, allowed=False)
+    assert await access_control.validate_personal_token(token) is None
 
 
 async def test_resolve_login_auto_provisions_when_no_allowlist_restriction():

@@ -85,7 +85,7 @@ async def api_update_server(
     server_id: int, req: ServerUpdateRequest, username: str = Depends(require_api_auth)
 ):
     existing = await get_server(server_id)
-    if not existing or not access_control.can_manage(existing, username):
+    if not existing or not await access_control.can_manage(existing, username):
         raise HTTPException(status_code=404, detail="Server not found")
 
     was_running = child_manager.get(existing.name) is not None
@@ -141,7 +141,7 @@ async def api_update_server(
 @router.delete("/servers/{server_id}")
 async def api_delete_server(server_id: int, username: str = Depends(require_api_auth)):
     config = await get_server(server_id)
-    if not config or not access_control.can_manage(config, username):
+    if not config or not await access_control.can_manage(config, username):
         raise HTTPException(status_code=404, detail="Server not found")
     await child_manager.remove(config.name)
     await uninstall(config)
@@ -152,7 +152,7 @@ async def api_delete_server(server_id: int, username: str = Depends(require_api_
 @router.post("/servers/{server_id}/enable")
 async def api_enable_server(server_id: int, username: str = Depends(require_api_auth)):
     config = await get_server(server_id)
-    if not config or not access_control.can_manage(config, username):
+    if not config or not await access_control.can_manage(config, username):
         raise HTTPException(status_code=404, detail="Server not found")
     await update_server_enabled(server_id, True)
     config.enabled = True
@@ -166,7 +166,7 @@ async def api_enable_server(server_id: int, username: str = Depends(require_api_
 @router.post("/servers/{server_id}/disable")
 async def api_disable_server(server_id: int, username: str = Depends(require_api_auth)):
     config = await get_server(server_id)
-    if not config or not access_control.can_manage(config, username):
+    if not config or not await access_control.can_manage(config, username):
         raise HTTPException(status_code=404, detail="Server not found")
     await child_manager.remove(config.name)
     await update_server_enabled(server_id, False)
@@ -176,7 +176,7 @@ async def api_disable_server(server_id: int, username: str = Depends(require_api
 @router.post("/servers/{server_id}/restart")
 async def api_restart_server(server_id: int, username: str = Depends(require_api_auth)):
     config = await get_server(server_id)
-    if not config or not access_control.can_manage(config, username):
+    if not config or not await access_control.can_manage(config, username):
         raise HTTPException(status_code=404, detail="Server not found")
     try:
         state = await child_manager.restart(config.name)

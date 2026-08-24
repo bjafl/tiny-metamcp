@@ -34,7 +34,7 @@ def _cfg(c: Server) -> dict:
 
 async def _find_by_name(name: str, username: str) -> Server:
     for server in await database.list_servers():
-        if server.name == name and access_control.can_manage(server, username):
+        if server.name == name and await access_control.can_manage(server, username):
             return server
     raise ValueError(f"No server named {name!r}")
 
