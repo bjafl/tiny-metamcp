@@ -13,11 +13,15 @@ from sqlmodel import SQLModel, select
 
 from .config import ADMIN_USERS, DB_PATH, GITHUB_ALLOWED_USERS, STEAM_ALLOWED_USERS
 from .models import (  # noqa: F401 – re-exported for callers
+    AllowedIdentity,
+    AuthSeedState,
     OAuthToken,
     PersonalToken,
     Server,
     ServerType,
     ServerVisibility,
+    User,
+    UserIdentity,
 )
 
 _DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
@@ -360,3 +364,138 @@ async def get_username_by_token_hash(token_hash: str) -> str | None:
         )
         token = result.scalar_one_or_none()
         return token.username if token else None
+
+
+# ── Users ─────────────────────────────────────────────────────────────────────
+
+
+async def create_user(is_admin: bool = False) -> User:
+    async with _session_factory() as session:
+        user = User(is_admin=is_admin)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+    return user
+
+
+async def get_user(user_id: int) -> User | None:
+    async with _session_factory() as session:
+        return await session.get(User, user_id)
+
+
+async def list_users() -> list[User]:
+    async with _session_factory() as session:
+        result = await session.execute(select(User).order_by(User.id))
+        return list(result.scalars().all())
+
+
+async def update_user_flags(
+    user_id: int, *, is_admin: bool | None = None, allowed: bool | None = None
+) -> User | None:
+    async with _session_factory() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            return None
+        if is_admin is not None:
+            user.is_admin = is_admin
+        if allowed is not None:
+            user.allowed = allowed
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
+# ── User identities ──────────────────────────────────────────────────────────
+
+
+async def get_user_identity(provider: str, raw_id: str) -> UserIdentity | None:
+    async with _session_factory() as session:
+        result = await session.execute(
+            select(UserIdentity).where(
+                UserIdentity.provider == provider, UserIdentity.raw_id == raw_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def create_user_identity(
+    user_id: int, provider: str, raw_id: str, display_name: str | None
+) -> UserIdentity:
+    async with _session_factory() as session:
+        identity = UserIdentity(
+            user_id=user_id, provider=provider, raw_id=raw_id, display_name=display_name
+        )
+        session.add(identity)
+        await session.commit()
+        await session.refresh(identity)
+    return identity
+
+
+async def update_user_identity_display_name(identity_id: int, display_name: str | None) -> None:
+    async with _session_factory() as session:
+        identity = await session.get(UserIdentity, identity_id)
+        if identity:
+            identity.display_name = display_name
+            await session.commit()
+
+
+async def list_user_identities(user_id: int) -> list[UserIdentity]:
+    async with _session_factory() as session:
+        result = await session.execute(
+            select(UserIdentity).where(UserIdentity.user_id == user_id).order_by(UserIdentity.id)
+        )
+        return list(result.scalars().all())
+
+
+async def delete_user_identity(identity_id: int) -> None:
+    async with _session_factory() as session:
+        identity = await session.get(UserIdentity, identity_id)
+        if identity:
+            await session.delete(identity)
+            await session.commit()
+
+
+# ── Allowed identities (pre-approval list) ──────────────────────────────────
+
+
+async def get_allowed_identity(provider: str, raw_id: str) -> AllowedIdentity | None:
+    async with _session_factory() as session:
+        result = await session.execute(
+            select(AllowedIdentity).where(
+                AllowedIdentity.provider == provider, AllowedIdentity.raw_id == raw_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def has_any_allowed_identity(provider: str) -> bool:
+    async with _session_factory() as session:
+        result = await session.execute(
+            select(AllowedIdentity.id).where(AllowedIdentity.provider == provider).limit(1)
+        )
+        return result.first() is not None
+
+
+async def create_allowed_identity(
+    provider: str, raw_id: str, grant_admin: bool = False
+) -> AllowedIdentity:
+    async with _session_factory() as session:
+        row = AllowedIdentity(provider=provider, raw_id=raw_id, grant_admin=grant_admin)
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return row
+
+
+async def delete_allowed_identity(allowed_identity_id: int) -> None:
+    async with _session_factory() as session:
+        row = await session.get(AllowedIdentity, allowed_identity_id)
+        if row:
+            await session.delete(row)
+            await session.commit()
+
+
+async def list_allowed_identities() -> list[AllowedIdentity]:
+    async with _session_factory() as session:
+        result = await session.execute(select(AllowedIdentity).order_by(AllowedIdentity.id))
+        return list(result.scalars().all())

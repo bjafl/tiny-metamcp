@@ -16,10 +16,24 @@ from aggregator.database import (
     _migrate_oauth_tokens_table,
     _migrate_server_columns,
     add_server,
+    create_allowed_identity,
+    create_user,
+    create_user_identity,
+    delete_allowed_identity,
     delete_server,
+    delete_user_identity,
+    get_allowed_identity,
+    get_user,
+    get_user_identity,
     get_username_by_token_hash,
+    has_any_allowed_identity,
+    list_allowed_identities,
+    list_user_identities,
+    list_users,
     set_personal_token,
     update_server,
+    update_user_flags,
+    update_user_identity_display_name,
 )
 from aggregator.models import (
     AllowedIdentity,
@@ -626,3 +640,80 @@ async def test_seed_auth_env_vars_runs_only_once(tmp_path, monkeypatch):
         assert count == 0  # stayed empty -- not silently repopulated
     finally:
         await engine.dispose()
+
+
+async def test_create_and_get_user():
+    user = await create_user(is_admin=True)
+    fetched = await get_user(user.id)
+    assert fetched is not None
+    assert fetched.is_admin is True
+    assert fetched.allowed is True
+
+
+async def test_get_user_unknown_id_returns_none():
+    assert await get_user(999_999_999) is None
+
+
+async def test_list_users_includes_created_user():
+    user = await create_user()
+    names = {u.id for u in await list_users()}
+    assert user.id in names
+
+
+async def test_update_user_flags_partial_update():
+    user = await create_user(is_admin=False)
+    updated = await update_user_flags(user.id, allowed=False)
+    assert updated.allowed is False
+    assert updated.is_admin is False  # untouched
+
+
+async def test_update_user_flags_unknown_id_returns_none():
+    assert await update_user_flags(999_999_999, is_admin=True) is None
+
+
+async def test_create_and_get_user_identity():
+    user = await create_user()
+    identity = await create_user_identity(user.id, "github", "crud-test-user", "Tester")
+    fetched = await get_user_identity("github", "crud-test-user")
+    assert fetched is not None
+    assert fetched.id == identity.id
+    assert fetched.user_id == user.id
+
+
+async def test_get_user_identity_unknown_returns_none():
+    assert await get_user_identity("github", "no-such-user-xyz") is None
+
+
+async def test_update_user_identity_display_name():
+    user = await create_user()
+    identity = await create_user_identity(user.id, "steam", "76500000000000002", "Old Name")
+    await update_user_identity_display_name(identity.id, "New Name")
+    fetched = await get_user_identity("steam", "76500000000000002")
+    assert fetched.display_name == "New Name"
+
+
+async def test_list_and_delete_user_identity():
+    user = await create_user()
+    identity = await create_user_identity(user.id, "github", "crud-list-test", None)
+    assert identity.id in {i.id for i in await list_user_identities(user.id)}
+    await delete_user_identity(identity.id)
+    assert identity.id not in {i.id for i in await list_user_identities(user.id)}
+
+
+async def test_allowed_identity_crud_round_trip():
+    row = await create_allowed_identity("github", "crud-allowed-test", grant_admin=True)
+    fetched = await get_allowed_identity("github", "crud-allowed-test")
+    assert fetched is not None
+    assert fetched.grant_admin is True
+    assert row.id in {r.id for r in await list_allowed_identities()}
+    await delete_allowed_identity(row.id)
+    assert await get_allowed_identity("github", "crud-allowed-test") is None
+
+
+async def test_has_any_allowed_identity_true_and_false():
+    assert not await has_any_allowed_identity("discord")  # unused provider, definitely empty
+    row = await create_allowed_identity("discord", "has-any-test")
+    try:
+        assert await has_any_allowed_identity("discord")
+    finally:
+        await delete_allowed_identity(row.id)
