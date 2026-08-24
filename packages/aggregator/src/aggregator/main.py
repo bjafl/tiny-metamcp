@@ -9,9 +9,10 @@ from . import access_control, admin_auth, identity_providers, log_capture, oauth
 from .aggregator import current_user, mcp_server, sse_transport, streamable_manager
 from .api.oauth_router import router as oauth_router
 from .api.routers import router as api_router
+from .api.users_router import router as users_router
 from .child_manager import child_manager
 from .config import LOG_LEVEL, WEBUI_DIST_DIR
-from .database import init_db, list_servers
+from .database import init_db, list_servers, list_user_identities
 
 logging.basicConfig(level=LOG_LEVEL)
 log_capture.setup()
@@ -53,6 +54,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="MCP Aggregator", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.include_router(oauth_router)
 app.include_router(api_router, prefix="/api")
+app.include_router(users_router, prefix="/api")
 
 
 # ── Bearer auth for MCP endpoints ────────────────────────────────────────────
@@ -184,6 +186,14 @@ async def admin_login_steam():
     return admin_auth.login_redirect(identity_providers.steam_provider)
 
 
+@app.get("/admin/link/{provider}")
+async def admin_link(provider: str, request: Request):
+    p = identity_providers.get_provider(provider)
+    if p is None or not p.is_configured():
+        raise HTTPException(status_code=400, detail="Unknown or unconfigured provider")
+    return await admin_auth.login_redirect_for_link(request, p)
+
+
 @app.get("/admin/logout")
 async def admin_logout():
     response = RedirectResponse("/admin/login", status_code=302)
@@ -200,23 +210,41 @@ async def api_auth_providers():
 
 @app.get("/api/me")
 async def api_me(request: Request):
-    user = admin_auth.get_session_user(request)
+    user = await admin_auth.get_session_user(request)
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    identities = await list_user_identities(int(user.removeprefix("user:")))
     return {
         "username": user,
-        "is_admin": access_control.is_admin(user),
+        "is_admin": await access_control.is_admin(user),
         "display_name": admin_auth.get_session_display_name(request),
+        "identities": [
+            {"id": i.id, "provider": i.provider, "raw_id": i.raw_id, "display_name": i.display_name}
+            for i in identities
+        ],
     }
 
 
 @app.post("/api/me/token")
 async def api_generate_token(request: Request):
-    user = admin_auth.get_session_user(request)
+    user = await admin_auth.get_session_user(request)
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     token = await access_control.generate_personal_token(user)
     return {"token": token}
+
+
+@app.delete("/api/me/identities/{identity_id}")
+async def api_unlink_identity(identity_id: int, request: Request):
+    user = await admin_auth.get_session_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    outcome = await access_control.unlink_identity(user, identity_id)
+    if outcome == "not_found":
+        raise HTTPException(status_code=404, detail="Identity not found")
+    if outcome == "last_identity":
+        raise HTTPException(status_code=400, detail="Cannot remove your last remaining identity")
+    return {"deleted": identity_id}
 
 
 # ── SPA static serving ───────────────────────────────────────────────────────
