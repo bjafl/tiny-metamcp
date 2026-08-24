@@ -6,7 +6,7 @@ import urllib.parse
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from .. import admin_auth, identity_providers, oauth
+from .. import access_control, admin_auth, identity_providers, oauth
 
 router = APIRouter()
 
@@ -156,6 +156,8 @@ async def authorize_continue(provider: str = Query(...), state: str = Query(...)
 
 
 async def _handle_oauth_callback(request: Request, provider: identity_providers.IdentityProvider):
+    if request.cookies.get("link_identity_state"):
+        return await admin_auth.handle_link_callback(request, provider)
     if request.cookies.get("admin_oauth_state"):
         return await admin_auth.handle_callback(request, provider)
 
@@ -170,7 +172,15 @@ async def _handle_oauth_callback(request: Request, provider: identity_providers.
             status_code=403,
         )
 
-    finish_result = await oauth.finish_session(state, result.username)
+    provider_slug, _, raw_id = result.username.partition(":")
+    canonical = await access_control.resolve_login(provider_slug, raw_id, result.display_name)
+    if canonical is None:
+        return HTMLResponse(
+            "<h1>Access denied</h1><p>Authentication failed or user is not authorized.</p>",
+            status_code=403,
+        )
+
+    finish_result = await oauth.finish_session(state, canonical)
     if not finish_result:
         return HTMLResponse(
             "<h1>Access denied</h1><p>Authentication failed or user is not authorized.</p>",

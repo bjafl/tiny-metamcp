@@ -10,7 +10,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from aggregator import identity_providers, oauth
+from aggregator import access_control, identity_providers, oauth
 from aggregator.api.oauth_router import router as oauth_router
 from aggregator.identity_providers import ProviderResult
 
@@ -120,6 +120,7 @@ async def test_oauth_callback_github_mcp_flow_issues_redirect_with_code(client, 
         "resolve_callback",
         AsyncMock(return_value=ProviderResult(username="github:octocat", display_name="octocat")),
     )
+    monkeypatch.setattr(access_control, "resolve_login", AsyncMock(return_value="user:1"))
     monkeypatch.setattr(
         oauth,
         "finish_session",
@@ -138,6 +139,7 @@ async def test_oauth_callback_steam_mcp_flow_issues_redirect_with_code(client, m
         "resolve_callback",
         AsyncMock(return_value=ProviderResult(username="steam:765", display_name="Gamer")),
     )
+    monkeypatch.setattr(access_control, "resolve_login", AsyncMock(return_value="user:2"))
     monkeypatch.setattr(
         oauth,
         "finish_session",
@@ -160,3 +162,37 @@ async def test_oauth_callback_returns_403_when_provider_resolve_fails(client, mo
     )
     resp = await client.get("/oauth/callback", params={"error": "access_denied", "state": "xyz"})
     assert resp.status_code == 403
+
+
+async def test_oauth_callback_returns_403_when_resolve_login_denies(client, monkeypatch):
+    monkeypatch.setattr(
+        identity_providers.github_provider,
+        "resolve_callback",
+        AsyncMock(return_value=ProviderResult(username="github:not-allowed", display_name="X")),
+    )
+    monkeypatch.setattr(access_control, "resolve_login", AsyncMock(return_value=None))
+
+    resp = await client.get("/oauth/callback", params={"code": "abc", "state": "xyz"})
+    assert resp.status_code == 403
+
+
+async def test_oauth_callback_link_flow_delegates_to_admin_auth(client, monkeypatch):
+    called = {}
+
+    async def fake_handle_link_callback(request, provider):
+        called["provider"] = provider.slug
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse("/admin/account", status_code=302)
+
+    monkeypatch.setattr(
+        "aggregator.api.oauth_router.admin_auth.handle_link_callback", fake_handle_link_callback
+    )
+
+    resp = await client.get(
+        "/oauth/callback",
+        params={"code": "abc", "state": "xyz"},
+        cookies={"link_identity_state": "present"},
+    )
+    assert resp.status_code == 302
+    assert called["provider"] == "github"
