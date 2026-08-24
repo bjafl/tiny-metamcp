@@ -19,8 +19,9 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
 
+from aggregator import oauth
 from aggregator.child_manager import child_manager
-from aggregator.database import add_server, delete_server
+from aggregator.database import add_server, delete_server, update_user_flags
 from aggregator.models import ServerType, ServerVisibility
 
 
@@ -151,3 +152,57 @@ async def test_mcp_call_tool_rejects_private_server_for_non_owner(
     finally:
         await child_manager.remove(name)
         await delete_server(config.id)
+
+
+def _pkce_pair(verifier: str) -> tuple[str, str]:
+    import base64
+    import hashlib
+
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    return verifier, challenge
+
+
+async def test_mcp_bearer_oauth_token_revoked_when_account_disabled(aggregator_url, make_user):
+    """Finding 2 regression: main.py's _check_bearer must re-validate an
+    OAuth bearer token's owner against current DB state on every request,
+    same as the personal-token branch already does -- otherwise disabling
+    an account (allowed=False) doesn't actually revoke its /mcp access
+    for up to the access token's 1hr lifetime (plus indefinitely via
+    refresh). Mints a real OAuth access token via the actual
+    start_session/finish_session/exchange_code flow, same as a live MCP
+    client would, then disables the account and confirms /mcp now 401s."""
+    user = await make_user("mcp-integ-oauth-disable-user")
+    user_id = int(user.removeprefix("user:"))
+
+    verifier, challenge = _pkce_pair("a-real-code-verifier-at-least-43-characters-long")
+    state = oauth.start_session(
+        "oauth-disable-client", "https://client.example/cb", challenge, "cs"
+    )
+    finish_result = await oauth.finish_session(state, user)
+    assert finish_result is not None
+    code, _, _ = finish_result
+    exchange_result = await oauth.exchange_code(
+        code, verifier, "oauth-disable-client", "https://client.example/cb"
+    )
+    assert exchange_result is not None
+    access_token, _ = exchange_result
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    async with httpx2.AsyncClient() as h:
+        # Sanity check: the token grants access while the account is
+        # still enabled -- _check_bearer's auth dependency must not
+        # itself reject this request (whatever streamable_manager makes
+        # of the "ping" body is irrelevant here).
+        still_enabled = await h.post(aggregator_url, headers=headers, json=body)
+        assert still_enabled.status_code != 401
+
+        await update_user_flags(user_id, allowed=False)
+
+        after_disable = await h.post(aggregator_url, headers=headers, json=body)
+        assert after_disable.status_code == 401

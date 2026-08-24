@@ -79,6 +79,8 @@ async def _check_bearer(request: Request) -> str:
     if auth.startswith("Bearer "):
         token = auth[7:]
         username = await oauth.validate_bearer(token)
+        if username is not None and not await access_control.is_session_valid(username):
+            username = None
         if username is None:
             username = await access_control.validate_personal_token(token)
         if username:
