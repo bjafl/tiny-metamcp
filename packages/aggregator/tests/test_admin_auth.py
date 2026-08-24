@@ -11,8 +11,13 @@ import pytest
 from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from aggregator import access_control, admin_auth
-from aggregator.admin_auth import get_session_display_name, get_session_user, require_api_auth
+from aggregator import admin_auth
+from aggregator.admin_auth import (
+    get_session_display_name,
+    get_session_user,
+    require_admin,
+    require_api_auth,
+)
 from aggregator.identity_providers import ProviderResult
 
 
@@ -28,36 +33,41 @@ def _session_cookie(username: str, display_name: str) -> str:
     return admin_auth._signer.dumps({"username": username, "display_name": display_name})
 
 
-def test_get_session_user_returns_none_for_garbage_cookie():
-    assert get_session_user(_request_with_cookie("not-a-real-signed-value")) is None
+async def test_get_session_user_returns_none_for_garbage_cookie():
+    assert await get_session_user(_request_with_cookie("not-a-real-signed-value")) is None
 
 
-def test_get_session_user_returns_none_when_no_cookie():
-    assert get_session_user(Request({"type": "http", "headers": []})) is None
+async def test_get_session_user_returns_none_when_no_cookie():
+    assert await get_session_user(Request({"type": "http", "headers": []})) is None
 
 
-def test_get_session_user_returns_none_for_legacy_plain_string_payload():
+async def test_get_session_user_returns_none_for_legacy_plain_string_payload():
     """Sessions issued before the Steam-login change signed a plain
     username string, not a {"username", "display_name"} dict. These must
     be treated as invalid (forcing re-login), not crash."""
     legacy_cookie = admin_auth._signer.dumps("octocat")
-    assert get_session_user(_request_with_cookie(legacy_cookie)) is None
+    assert await get_session_user(_request_with_cookie(legacy_cookie)) is None
 
 
-def test_get_session_user_returns_username_for_valid_cookie(monkeypatch):
-    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", set())
-    cookie = _session_cookie("github:octocat", "octocat")
-    assert get_session_user(_request_with_cookie(cookie)) == "github:octocat"
+async def test_get_session_user_returns_username_for_valid_cookie():
+    from aggregator import access_control
+
+    canonical = await access_control.resolve_login("github", "admin-auth-valid-user", "X")
+    cookie = _session_cookie(canonical, "X")
+    assert await get_session_user(_request_with_cookie(cookie)) == canonical
 
 
-def test_get_session_user_returns_none_when_not_allowed(monkeypatch):
-    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", {"someone-else"})
-    cookie = _session_cookie("github:octocat", "octocat")
-    assert get_session_user(_request_with_cookie(cookie)) is None
+async def test_get_session_user_returns_none_when_account_disabled():
+    from aggregator import access_control, database
+
+    canonical = await access_control.resolve_login("github", "admin-auth-disabled-user", "X")
+    user_id = int(canonical.removeprefix("user:"))
+    await database.update_user_flags(user_id, allowed=False)
+    cookie = _session_cookie(canonical, "X")
+    assert await get_session_user(_request_with_cookie(cookie)) is None
 
 
-def test_get_session_display_name_returns_display_name(monkeypatch):
-    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", set())
+def test_get_session_display_name_returns_display_name():
     cookie = _session_cookie("steam:76561198012345678", "CoolGamer99")
     assert get_session_display_name(_request_with_cookie(cookie)) == "CoolGamer99"
 
@@ -76,9 +86,12 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
 
 
 async def test_require_api_auth_accepts_valid_personal_token():
-    token = await access_control.generate_personal_token("github:auth-test-user")
+    from aggregator import access_control
+
+    canonical = await access_control.resolve_login("github", "require-api-auth-user", "X")
+    token = await access_control.generate_personal_token(canonical)
     username = await require_api_auth(_request_with_headers({"authorization": f"Bearer {token}"}))
-    assert username == "github:auth-test-user"
+    assert username == canonical
 
 
 async def test_require_api_auth_rejects_unknown_bearer_token():
@@ -90,6 +103,22 @@ async def test_require_api_auth_rejects_unknown_bearer_token():
 async def test_require_api_auth_rejects_missing_auth():
     with pytest.raises(HTTPException) as exc_info:
         await require_api_auth(Request({"type": "http", "headers": []}))
+    assert exc_info.value.status_code == 401
+
+
+async def test_require_admin_rejects_non_admin_with_403():
+    from aggregator import access_control
+
+    canonical = await access_control.resolve_login("github", "require-admin-non-admin-user", "X")
+    token = await access_control.generate_personal_token(canonical)
+    with pytest.raises(HTTPException) as exc_info:
+        await require_admin(_request_with_headers({"authorization": f"Bearer {token}"}))
+    assert exc_info.value.status_code == 403
+
+
+async def test_require_admin_rejects_missing_auth_with_401():
+    with pytest.raises(HTTPException) as exc_info:
+        await require_admin(Request({"type": "http", "headers": []}))
     assert exc_info.value.status_code == 401
 
 
@@ -115,18 +144,14 @@ def test_login_redirect_sets_state_cookie_and_delegates_to_provider():
     assert "admin_oauth_state=" in response.headers.get("set-cookie", "")
 
 
-async def test_handle_callback_sets_session_cookie_on_success(monkeypatch):
-    monkeypatch.setattr(access_control, "GITHUB_ALLOWED_USERS", set())
+async def test_handle_callback_sets_session_cookie_on_success():
     provider = _FakeProvider()
     provider.resolve_callback = AsyncMock(
-        return_value=ProviderResult(username="github:octocat", display_name="octocat")
+        return_value=ProviderResult(username="github:handle-callback-success", display_name="X")
     )
 
-    # Simulate the state round-trip: login_redirect signs+cookies a state,
-    # the "callback" request carries that same state back as a query param.
     login_response = admin_auth.login_redirect(provider)
     state_cookie = login_response.headers["set-cookie"]
-    # extract admin_oauth_state=<value> up to the next ';'
     cookie_value = state_cookie.split("admin_oauth_state=")[1].split(";")[0]
     raw_state = admin_auth._state_signer.loads(cookie_value, max_age=admin_auth.STATE_MAX_AGE)
 

@@ -44,14 +44,14 @@ def _load_session_payload(request: Request) -> dict | None:
     return payload
 
 
-def get_session_user(request: Request) -> str | None:
-    """Return the authenticated (prefixed) username from the session
-    cookie, or None."""
+async def get_session_user(request: Request) -> str | None:
+    """Return the authenticated (canonical "user:<id>") username from the
+    session cookie, or None."""
     payload = _load_session_payload(request)
     if payload is None:
         return None
     username = payload.get("username")
-    if not username or not access_control.is_allowed(username):
+    if not username or not await access_control.is_session_valid(username):
         return None
     return username
 
@@ -74,7 +74,7 @@ async def require_api_auth(request: Request) -> str:
     are only valid for /mcp and /messages. Returns the authenticated
     username so callers can scope their query to it.
     """
-    user = get_session_user(request)
+    user = await get_session_user(request)
     if user:
         return user
     auth = request.headers.get("authorization", "")
@@ -83,6 +83,16 @@ async def require_api_auth(request: Request) -> str:
         if username:
             return username
     raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+async def require_admin(request: Request) -> str:
+    """FastAPI dependency for admin-only /api/* routes (see
+    api/users_router.py). Same acceptance as require_api_auth, plus an
+    admin-rights check."""
+    user = await require_api_auth(request)
+    if not await access_control.is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
 
 
 def login_redirect(provider: IdentityProvider) -> RedirectResponse:
@@ -123,14 +133,14 @@ async def handle_callback(request: Request, provider: IdentityProvider) -> Redir
     if result is None:
         return _login_error("Authentication error — please try again")
 
-    if not access_control.is_allowed(result.username):
+    provider_slug, _, raw_id = result.username.partition(":")
+    canonical = await access_control.resolve_login(provider_slug, raw_id, result.display_name)
+    if canonical is None:
         logger.warning("Admin login denied: %s not allowed", result.username)
         return _login_error(f"User '{result.username}' is not authorized")
 
-    logger.info("Admin login: %s", result.username)
-    session_value = _signer.dumps(
-        {"username": result.username, "display_name": result.display_name}
-    )
+    logger.info("Admin login: %s (%s)", canonical, result.username)
+    session_value = _signer.dumps({"username": canonical, "display_name": result.display_name})
     response = RedirectResponse("/admin", status_code=302)
     response.set_cookie(
         "admin_session",
