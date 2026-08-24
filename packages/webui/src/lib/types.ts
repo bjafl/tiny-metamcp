@@ -58,13 +58,47 @@ export interface LogEntry {
   msg: string;
 }
 
+export interface UserIdentitySummary {
+  id: number;
+  provider: string;
+  raw_id: string;
+  display_name: string | null;
+}
+
 export interface Me {
   username: string;
   is_admin: boolean;
   display_name: string | null;
+  identities: UserIdentitySummary[];
 }
 
 export type AuthProviders = Record<string, boolean>;
+
+export interface User {
+  id: number;
+  is_admin: boolean;
+  allowed: boolean;
+  created_at: number;
+  identities: UserIdentitySummary[];
+}
+
+export interface UpdateUserInput {
+  is_admin?: boolean;
+  allowed?: boolean;
+}
+
+export interface AllowedIdentity {
+  id: number;
+  provider: string;
+  raw_id: string;
+  grant_admin: boolean;
+}
+
+export interface AddAllowedIdentityInput {
+  provider: string;
+  raw_id: string;
+  grant_admin: boolean;
+}
 
 export interface GenerateTokenResult {
   token: string;

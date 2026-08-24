@@ -1,6 +1,8 @@
 import type {
+  AddAllowedIdentityInput,
   AddServerInput,
   AddServerResult,
+  AllowedIdentity,
   AuthProviders,
   CallToolInput,
   CallToolResult,
@@ -8,6 +10,8 @@ import type {
   Me,
   ServerConfig,
   ToolInfo,
+  UpdateUserInput,
+  User,
 } from "./types";
 
 export class ApiError extends Error {
@@ -43,6 +47,19 @@ export const api = {
   generateToken: () =>
     request<GenerateTokenResult>("/api/me/token", { method: "POST" }),
   authProviders: () => request<AuthProviders>("/api/auth/providers"),
+  unlinkIdentity: (id: number) =>
+    request<{ deleted: number }>(`/api/me/identities/${id}`, { method: "DELETE" }),
+  listUsers: () => request<User[]>("/api/users"),
+  updateUser: (id: number, input: UpdateUserInput) =>
+    request<User>(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+  listAllowedIdentities: () => request<AllowedIdentity[]>("/api/allowed-identities"),
+  addAllowedIdentity: (input: AddAllowedIdentityInput) =>
+    request<AllowedIdentity>("/api/allowed-identities", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  deleteAllowedIdentity: (id: number) =>
+    request<{ deleted: number }>(`/api/allowed-identities/${id}`, { method: "DELETE" }),
   listServers: () => request<ServerConfig[]>("/api/servers"),
   addServer: (input: AddServerInput) =>
     request<AddServerResult>("/api/servers", {
