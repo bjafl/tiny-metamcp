@@ -200,6 +200,9 @@ async def handle_link_callback(request: Request, provider: IdentityProvider) -> 
     if not request_state or not secrets.compare_digest(request_state, stored["state"]):
         return _link_error("State mismatch — please try again")
 
+    if not provider.is_configured():
+        return _link_error("This provider is no longer available")
+
     result = await provider.resolve_callback(request)
     if result is None:
         return _link_error("Authentication error — please try again")

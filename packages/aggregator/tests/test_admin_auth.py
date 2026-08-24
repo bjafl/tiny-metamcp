@@ -257,6 +257,40 @@ async def test_handle_link_callback_attaches_identity_to_current_user():
     assert any(i.provider == "steam" and i.raw_id == "76500000000000040" for i in identities)
 
 
+async def test_handle_link_callback_rejects_when_provider_not_configured():
+    """Finding 8 regression: a provider that was configured when the link
+    flow started (e.g. its env vars got removed mid-flight) must not be
+    allowed to complete the callback -- handle_link_callback must check
+    is_configured() again before calling resolve_callback()."""
+    from aggregator import access_control
+
+    canonical = await access_control.resolve_login("github", "link-callback-unconfigured-user", "X")
+    cookie = _session_cookie(canonical, "X")
+    login_request = Request(
+        {"type": "http", "headers": [(b"cookie", f"admin_session={cookie}".encode())]}
+    )
+    provider = _FakeProvider()
+    login_response = await admin_auth.login_redirect_for_link(login_request, provider)
+    state_cookie = login_response.headers["set-cookie"]
+    cookie_value = state_cookie.split("link_identity_state=")[1].split(";")[0]
+    stored = admin_auth._link_state_signer.loads(cookie_value, max_age=admin_auth.STATE_MAX_AGE)
+
+    provider.is_configured = lambda: False
+    provider.resolve_callback = AsyncMock(
+        side_effect=AssertionError("resolve_callback must not be called when unconfigured")
+    )
+    callback_request = Request(
+        {
+            "type": "http",
+            "query_string": f"state={stored['state']}".encode(),
+            "headers": [(b"cookie", f"link_identity_state={cookie_value}".encode())],
+        }
+    )
+    response = await admin_auth.handle_link_callback(callback_request, provider)
+    assert response.status_code == 302
+    assert "link_error=" in response.headers["location"]
+
+
 async def test_handle_link_callback_rejects_state_mismatch():
     provider = _FakeProvider()
     request = Request(
