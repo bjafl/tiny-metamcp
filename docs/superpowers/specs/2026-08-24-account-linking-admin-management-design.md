@@ -135,10 +135,22 @@ Resolution order:
 2. Not found → check `AllowedIdentity` (empty set for that provider =
    unrestricted) → if allowed, create `User` (+ `is_admin` from
    `grant_admin` if a matching `AllowedIdentity` row exists) and the
-   `UserIdentity`. If a matching `AllowedIdentity` row was consulted, it
-   is deleted once consumed — keeps the admin's "pending identities" list
-   meaning only genuinely-not-yet-used pre-approvals, not a growing log of
-   everyone who's ever signed up.
+   `UserIdentity`. **The matching `AllowedIdentity` row is *not* deleted**
+   — deleting it on consumption was the original design, but it created a
+   self-destructing allow-list: a single-user private deployment (the
+   documented default, `GITHUB_ALLOWED_USERS=your-github-username`) would
+   have its one entry consumed by the owner's own first login, after which
+   the provider's allow-list read as empty (= unrestricted) and the
+   instance silently opened to public registration. The row must persist
+   so `has_any_allowed_identity()` keeps reporting the provider as
+   restricted for as long as any row exists for it — a consumed row is
+   already inert for login purposes regardless (step 1 always finds the
+   `UserIdentity` first and never reaches this branch again for that
+   identity). The admin-facing "pending identities" list still needs to
+   show only genuinely-not-yet-used pre-approvals, not a growing log of
+   everyone who's ever signed up — that's a presentation-layer filter
+   (`database.list_pending_allowed_identities()`: an `AllowedIdentity` row
+   with no matching `UserIdentity` yet), not a deletion.
 3. Neither → `None` (403, same external behavior as today's denial path).
 
 **This is the one deliberate, load-bearing architectural shift in this
