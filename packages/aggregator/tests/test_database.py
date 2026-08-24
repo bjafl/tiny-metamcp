@@ -21,7 +21,13 @@ from aggregator.database import (
     set_personal_token,
     update_server,
 )
-from aggregator.models import AllowedIdentity, AuthSeedState, ServerType, ServerVisibility, User, UserIdentity
+from aggregator.models import (
+    AllowedIdentity,
+    ServerType,
+    ServerVisibility,
+    User,
+    UserIdentity,
+)
 
 
 async def _cleanup(server_id: int) -> None:
@@ -416,8 +422,7 @@ async def test_migrate_to_user_accounts_converts_prefixed_strings(tmp_path):
         "package TEXT, owner_username TEXT)"
     )
     conn.execute(
-        "CREATE TABLE personal_tokens (username TEXT PRIMARY KEY, token_hash TEXT, "
-        "created_at REAL)"
+        "CREATE TABLE personal_tokens (username TEXT PRIMARY KEY, token_hash TEXT, created_at REAL)"
     )
     conn.execute(
         "INSERT INTO servers (name, type, package, owner_username) VALUES "
@@ -490,8 +495,7 @@ async def test_migrate_to_user_accounts_is_idempotent(tmp_path):
         "package TEXT, owner_username TEXT)"
     )
     conn.execute(
-        "CREATE TABLE personal_tokens (username TEXT PRIMARY KEY, token_hash TEXT, "
-        "created_at REAL)"
+        "CREATE TABLE personal_tokens (username TEXT PRIMARY KEY, token_hash TEXT, created_at REAL)"
     )
     conn.execute(
         "INSERT INTO servers (name, type, package, owner_username) VALUES "
