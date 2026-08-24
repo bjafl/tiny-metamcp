@@ -9,8 +9,7 @@ purely in terms of an already-resolved username.
 from aggregator import oauth
 
 
-async def test_finish_session_issues_auth_code_for_allowed_user(monkeypatch):
-    monkeypatch.setattr("aggregator.oauth.access_control.is_allowed", lambda u: True)
+async def test_finish_session_issues_auth_code_for_allowed_user():
     state = oauth.start_session(
         "client-1", "https://client.example/cb", "challenge", "client-state"
     )
@@ -19,15 +18,6 @@ async def test_finish_session_issues_auth_code_for_allowed_user(monkeypatch):
     code, redirect_uri, client_state = result
     assert redirect_uri == "https://client.example/cb"
     assert client_state == "client-state"
-
-
-async def test_finish_session_rejects_disallowed_user(monkeypatch):
-    monkeypatch.setattr("aggregator.oauth.access_control.is_allowed", lambda u: False)
-    state = oauth.start_session(
-        "client-1", "https://client.example/cb", "challenge", "client-state"
-    )
-    result = await oauth.finish_session(state, "github:not-allowed")
-    assert result is None
 
 
 async def test_finish_session_rejects_unknown_state():
@@ -44,8 +34,7 @@ def _pkce_pair(verifier: str) -> tuple[str, str]:
     return verifier, challenge
 
 
-async def test_exchange_code_and_validate_bearer_round_trip(monkeypatch):
-    monkeypatch.setattr("aggregator.oauth.access_control.is_allowed", lambda u: True)
+async def test_exchange_code_and_validate_bearer_round_trip():
     verifier, challenge = _pkce_pair("a-real-code-verifier-at-least-43-characters-long")
     state = oauth.start_session("client-1", "https://client.example/cb", challenge, "cs")
     finish_result = await oauth.finish_session(state, "github:octocat")
@@ -57,8 +46,7 @@ async def test_exchange_code_and_validate_bearer_round_trip(monkeypatch):
     assert await oauth.validate_bearer(access_token) == "github:octocat"
 
 
-async def test_exchange_code_rejects_pkce_mismatch(monkeypatch):
-    monkeypatch.setattr("aggregator.oauth.access_control.is_allowed", lambda u: True)
+async def test_exchange_code_rejects_pkce_mismatch():
     _, challenge = _pkce_pair("the-real-verifier-that-was-registered-at-start-session")
     state = oauth.start_session("client-1", "https://client.example/cb", challenge, "cs")
     finish_result = await oauth.finish_session(state, "github:octocat")

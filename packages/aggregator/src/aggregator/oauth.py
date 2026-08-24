@@ -28,7 +28,6 @@ from dataclasses import dataclass
 import aiosqlite
 import httpx
 
-from . import access_control
 from .config import DB_PATH, MCP_DOMAIN
 
 logger = logging.getLogger(__name__)
@@ -143,18 +142,15 @@ def start_session(client_id: str, redirect_uri: str, code_challenge: str, client
 
 async def finish_session(oauth_state: str, username: str) -> tuple[str, str, str] | None:
     """
-    Given an already-resolved identity (from an IdentityProvider's
-    resolve_callback), validate it's allowed and issue an internal auth
-    code. Returns (auth_code, client_redirect_uri, client_state) or None on
-    any failure.
+    Given an already-resolved AND already-allowed canonical identity
+    (access_control.resolve_login has already run in the caller -- see
+    api/oauth_router.py), issue an internal auth code. Returns (auth_code,
+    client_redirect_uri, client_state), or None if the pending PKCE
+    session is unknown or expired.
     """
     session = _sessions.pop(oauth_state, None)
     if not session or session.expires_at < time.time():
         logger.warning("OAuth: unknown or expired state %s", oauth_state[:8])
-        return None
-
-    if not access_control.is_allowed(username):
-        logger.warning("OAuth rejected: %s not allowed", username)
         return None
 
     _gc()
