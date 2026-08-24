@@ -10,6 +10,8 @@ the auth flows (admin_auth.py, oauth.py) -- the rule lives here exactly once.
 import hashlib
 import secrets
 
+from sqlalchemy.exc import IntegrityError
+
 from . import database, identity_providers
 from .database import (
     get_username_by_token_hash,
@@ -59,9 +61,22 @@ async def resolve_login(provider: str, raw_id: str, display_name: str) -> str | 
     new_user = await database.create_user(
         is_admin=allowed_row.grant_admin if allowed_row else False
     )
-    await database.create_user_identity(new_user.id, provider, raw_id, display_name)
-    if allowed_row is not None:
-        await database.delete_allowed_identity(allowed_row.id)
+    try:
+        await database.create_user_identity(new_user.id, provider, raw_id, display_name)
+    except IntegrityError:
+        # Lost a race with a concurrent first login for the same identity
+        # -- the other request's User already owns this (provider, raw_id).
+        # Clean up our own now-orphaned, zero-identity User and defer to
+        # the winner rather than leaving a stray account behind or
+        # surfacing this as a 500.
+        await database.delete_user(new_user.id)
+        winner = await database.get_user_identity(provider, raw_id)
+        if winner is None:
+            raise
+        winner_user = await database.get_user(winner.user_id)
+        if winner_user is None or not winner_user.allowed:
+            return None
+        return f"user:{winner_user.id}"
     return f"user:{new_user.id}"
 
 

@@ -76,9 +76,9 @@ async def _migrate_identity_prefixes(conn: AsyncConnection) -> None:
     personal_tokens.username hold bare GitHub logins (e.g. "octocat") from
     before Steam login was added -- GitHub was the only provider, so every
     existing identity was necessarily a GitHub identity. Backfill the
-    "github:" prefix so is_allowed()/can_manage()/_is_visible()/
-    validate_personal_token() -- which now default-deny any unprefixed
-    identity -- keep recognizing them after upgrade. Idempotent: only rows
+    "github:" prefix so resolve_login()/is_session_valid()/can_manage()/
+    _is_visible()/validate_personal_token() -- which now default-deny any
+    unprefixed identity -- keep recognizing them after upgrade. Idempotent: only rows
     whose value contains no ":" are touched, so a fresh install or an
     already-migrated deployment is a no-op. Must run after create_all()
     and _migrate_server_columns() -- both tables, and servers.owner_username
@@ -405,6 +405,14 @@ async def update_user_flags(
         return user
 
 
+async def delete_user(user_id: int) -> None:
+    async with _session_factory() as session:
+        user = await session.get(User, user_id)
+        if user:
+            await session.delete(user)
+            await session.commit()
+
+
 # ── User identities ──────────────────────────────────────────────────────────
 
 
@@ -498,4 +506,22 @@ async def delete_allowed_identity(allowed_identity_id: int) -> None:
 async def list_allowed_identities() -> list[AllowedIdentity]:
     async with _session_factory() as session:
         result = await session.execute(select(AllowedIdentity).order_by(AllowedIdentity.id))
+        return list(result.scalars().all())
+
+
+async def list_pending_allowed_identities() -> list[AllowedIdentity]:
+    """Like list_allowed_identities, but excludes rows already consumed by
+    a real UserIdentity. resolve_login no longer deletes a consumed row
+    (deleting it would make the provider's allow-list look empty --
+    unrestricted -- the moment its own entries get used); this filters the
+    admin-facing "pending identities" view down to genuinely-not-yet-used
+    rows instead, matching what an admin actually wants to see there."""
+    async with _session_factory() as session:
+        subq = select(UserIdentity.id).where(
+            UserIdentity.provider == AllowedIdentity.provider,
+            UserIdentity.raw_id == AllowedIdentity.raw_id,
+        )
+        result = await session.execute(
+            select(AllowedIdentity).where(~subq.exists()).order_by(AllowedIdentity.id)
+        )
         return list(result.scalars().all())

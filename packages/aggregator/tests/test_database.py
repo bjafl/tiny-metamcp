@@ -28,6 +28,7 @@ from aggregator.database import (
     get_username_by_token_hash,
     has_any_allowed_identity,
     list_allowed_identities,
+    list_pending_allowed_identities,
     list_user_identities,
     list_users,
     set_personal_token,
@@ -717,3 +718,18 @@ async def test_has_any_allowed_identity_true_and_false():
         assert await has_any_allowed_identity("discord")
     finally:
         await delete_allowed_identity(row.id)
+
+
+async def test_list_pending_allowed_identities_excludes_consumed_rows():
+    row1 = await create_allowed_identity("github", "pending-test-unused")
+    row2 = await create_allowed_identity("github", "pending-test-used")
+    user = await create_user()
+    await create_user_identity(user.id, "github", "pending-test-used", None)
+    try:
+        pending = await list_pending_allowed_identities()
+        pending_pairs = {(r.provider, r.raw_id) for r in pending}
+        assert ("github", "pending-test-unused") in pending_pairs
+        assert ("github", "pending-test-used") not in pending_pairs
+    finally:
+        await delete_allowed_identity(row1.id)
+        await delete_allowed_identity(row2.id)

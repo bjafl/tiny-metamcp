@@ -78,17 +78,20 @@ def _allowed_out(row: AllowedIdentity) -> dict:
 
 @router.get("/allowed-identities")
 async def api_list_allowed_identities():
-    return [_allowed_out(r) for r in await database.list_allowed_identities()]
+    return [_allowed_out(r) for r in await database.list_pending_allowed_identities()]
 
 
 @router.post("/allowed-identities", status_code=201)
 async def api_add_allowed_identity(req: AllowedIdentityRequest):
     if req.provider not in identity_providers.PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unknown provider {req.provider!r}")
-    existing = await database.get_allowed_identity(req.provider, req.raw_id)
+    raw_id = req.raw_id.strip()
+    if not raw_id:
+        raise HTTPException(status_code=400, detail="raw_id must not be blank")
+    existing = await database.get_allowed_identity(req.provider, raw_id)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Already on the allow-list")
-    row = await database.create_allowed_identity(req.provider, req.raw_id, req.grant_admin)
+    row = await database.create_allowed_identity(req.provider, raw_id, req.grant_admin)
     return _allowed_out(row)
 
 

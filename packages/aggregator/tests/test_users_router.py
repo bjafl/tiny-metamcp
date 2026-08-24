@@ -100,6 +100,39 @@ async def test_allowed_identities_crud_requires_admin(client):
     assert not any(r["id"] == row_id for r in resp.json())
 
 
+async def test_allowed_identities_list_excludes_consumed_rows(client):
+    admin = await _make_user("users-router-consumed-admin", is_admin=True)
+    client.cookies.set("admin_session", _session_cookie(admin))
+
+    resp = await client.post(
+        "/api/allowed-identities",
+        json={"provider": "github", "raw_id": "consumed-allowed-user", "grant_admin": False},
+    )
+    assert resp.status_code == 201
+    row_id = resp.json()["id"]
+
+    # Consume the row via a real login -- resolve_login no longer deletes
+    # it (Finding 1), so the admin-facing "pending" list must filter it
+    # out instead.
+    await access_control.resolve_login("github", "consumed-allowed-user", "Consumed")
+
+    resp = await client.get("/api/allowed-identities")
+    assert resp.status_code == 200
+    assert not any(r["id"] == row_id for r in resp.json())
+
+    await database.delete_allowed_identity(row_id)
+
+
+async def test_add_allowed_identity_rejects_blank_raw_id(client):
+    admin = await _make_user("users-router-blank-raw-id-admin", is_admin=True)
+    client.cookies.set("admin_session", _session_cookie(admin))
+    resp = await client.post(
+        "/api/allowed-identities",
+        json={"provider": "github", "raw_id": "   ", "grant_admin": False},
+    )
+    assert resp.status_code == 400
+
+
 async def test_add_allowed_identity_rejects_unknown_provider(client):
     admin = await _make_user("users-router-bad-provider-admin", is_admin=True)
     client.cookies.set("admin_session", _session_cookie(admin))

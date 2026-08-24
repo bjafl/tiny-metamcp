@@ -6,6 +6,8 @@ tests exercise the DB-backed User/UserIdentity model via resolve_login,
 not raw env-var-backed prefixed strings.
 """
 
+import asyncio
+
 from aggregator import access_control, database, identity_providers
 from aggregator.database import add_server, delete_server
 from aggregator.models import ServerType, ServerVisibility
@@ -166,16 +168,39 @@ async def test_resolve_login_denies_when_allowlist_restricts_and_not_listed():
 
 async def test_resolve_login_provisions_and_consumes_matching_allowlist_row():
     row = await database.create_allowed_identity("github", "resolve-listed-user", grant_admin=True)
-    canonical = await access_control.resolve_login("github", "resolve-listed-user", "Listed")
-    assert canonical is not None
-    user_id = int(canonical.removeprefix("user:"))
-    user = await database.get_user(user_id)
-    assert user.is_admin is True  # grant_admin carried through
-    # Consumed: the allowed_identities row must be gone after use.
-    assert await database.get_allowed_identity("github", "resolve-listed-user") is None
-    assert await database.get_allowed_identity("github", "nonexistent-row-cleanup") is None
-    if await database.get_allowed_identity("github", "resolve-listed-user") is not None:
-        await database.delete_allowed_identity(row.id)  # safety net, shouldn't be needed
+    try:
+        canonical = await access_control.resolve_login("github", "resolve-listed-user", "Listed")
+        assert canonical is not None
+        user_id = int(canonical.removeprefix("user:"))
+        user = await database.get_user(user_id)
+        assert user.is_admin is True  # grant_admin carried through
+        # The allowed_identities row must still exist after use -- deleting
+        # it would make the provider look unrestricted the moment its own
+        # entries get consumed (see the regression test below).
+        assert await database.get_allowed_identity("github", "resolve-listed-user") is not None
+    finally:
+        await database.delete_allowed_identity(row.id)
+
+
+async def test_resolve_login_still_restricts_provider_after_its_only_entry_is_consumed():
+    """The exact bug this fix addresses: a single seeded allow-list entry
+    must not open the provider to everyone once that entry's owner logs
+    in -- the row must persist so has_any_allowed_identity() keeps
+    reporting the provider as restricted."""
+    row = await database.create_allowed_identity("github", "resolve-selfdestruct-owner")
+    try:
+        owner_canonical = await access_control.resolve_login(
+            "github", "resolve-selfdestruct-owner", "Owner"
+        )
+        assert owner_canonical is not None
+
+        stranger_result = await access_control.resolve_login(
+            "github", "resolve-selfdestruct-stranger", "Stranger"
+        )
+        assert stranger_result is None
+    finally:
+        if await database.get_allowed_identity("github", "resolve-selfdestruct-owner") is not None:
+            await database.delete_allowed_identity(row.id)
 
 
 async def test_resolve_login_returns_existing_canonical_for_known_identity():
@@ -290,3 +315,18 @@ async def test_unlink_identity_not_found_for_wrong_owner():
     steam_identity = next(i for i in identities if i.provider == "steam")
     outcome = await access_control.unlink_identity(other, steam_identity.id)
     assert outcome == "not_found"
+
+
+async def test_resolve_login_concurrent_first_login_does_not_duplicate_or_crash():
+    """Two concurrent resolve_login calls for the SAME brand-new identity
+    must not create two accounts and must not raise -- one wins, the
+    other resolves to the same winning account."""
+    results = await asyncio.gather(
+        access_control.resolve_login("github", "resolve-race-user", "Racer"),
+        access_control.resolve_login("github", "resolve-race-user", "Racer"),
+    )
+    assert results[0] is not None
+    assert results[1] is not None
+    assert results[0] == results[1]
+    identity = await database.get_user_identity("github", "resolve-race-user")
+    assert identity is not None
