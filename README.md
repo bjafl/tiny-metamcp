@@ -28,7 +28,7 @@ MCP Client (Claude Web UI, Claude Desktop, etc.)
 - **Browser → `/admin`, `/api`** — GitHub or Steam login via signed session cookies (whichever is configured; both may be enabled at once). Only allowed identities (`GITHUB_ALLOWED_USERS` / `STEAM_ALLOWED_USERS`) get in.
 - **MCP client → `/mcp`** — OAuth 2.1 + PKCE (Claude Web UI connectors, choosing a provider if more than one is configured) or a personal API token (Claude Desktop etc. — generate one from the webui's Account page after logging in).
 - **Claude Web UI** — Full OAuth 2.1 flow: discovery → dynamic client registration → PKCE authorize → provider login → token exchange. No manual token needed.
-- **Identity across providers** — a GitHub login and a Steam login are always separate identities in this system (`"github:octocat"` vs `"steam:76561198012345678"`) — there's no account linking. `ADMIN_USERS` values must include the provider prefix.
+- **Identity across providers** — a GitHub login and a Steam login are separate identities by default (`"github:octocat"` vs `"steam:76561198012345678"`), reachable as the same account only once explicitly linked (see below). `ADMIN_USERS` values must include the provider prefix.
 - **Account linking** — while logged in, link a second provider from the Account page (self-service; both identities must be logged into directly, no admin override). Linked identities reach the same account either way.
 
 ## Upgrading
