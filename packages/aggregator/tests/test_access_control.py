@@ -4,7 +4,7 @@ access_control.py -- the single module every other access-control
 enforcement point (meta_tools, routers, /mcp) delegates to.
 """
 
-from aggregator import access_control, identity_providers
+from aggregator import access_control, database, identity_providers
 from aggregator.database import add_server, delete_server
 from aggregator.models import ServerType, ServerVisibility
 
@@ -161,3 +161,75 @@ def test_is_allowed_false_for_unknown_provider_prefix():
 
 def test_is_allowed_false_for_unprefixed_username():
     assert not access_control.is_allowed("octocat")
+
+
+async def test_resolve_login_auto_provisions_when_no_allowlist_restriction():
+    canonical = await access_control.resolve_login("github", "resolve-new-user", "New User")
+    assert canonical is not None
+    assert canonical.startswith("user:")
+    identity = await database.get_user_identity("github", "resolve-new-user")
+    assert identity is not None
+    assert identity.display_name == "New User"
+
+
+async def test_resolve_login_denies_when_allowlist_restricts_and_not_listed():
+    row = await database.create_allowed_identity("github", "resolve-someone-else")
+    try:
+        result = await access_control.resolve_login("github", "resolve-not-listed", "X")
+        assert result is None
+    finally:
+        await database.delete_allowed_identity(row.id)
+
+
+async def test_resolve_login_provisions_and_consumes_matching_allowlist_row():
+    row = await database.create_allowed_identity("github", "resolve-listed-user", grant_admin=True)
+    canonical = await access_control.resolve_login("github", "resolve-listed-user", "Listed")
+    assert canonical is not None
+    user_id = int(canonical.removeprefix("user:"))
+    user = await database.get_user(user_id)
+    assert user.is_admin is True  # grant_admin carried through
+    # Consumed: the allowed_identities row must be gone after use.
+    assert await database.get_allowed_identity("github", "resolve-listed-user") is None
+    assert await database.get_allowed_identity("github", "nonexistent-row-cleanup") is None
+    if await database.get_allowed_identity("github", "resolve-listed-user") is not None:
+        await database.delete_allowed_identity(row.id)  # safety net, shouldn't be needed
+
+
+async def test_resolve_login_returns_existing_canonical_for_known_identity():
+    first = await access_control.resolve_login("github", "resolve-repeat-login", "First")
+    second = await access_control.resolve_login("github", "resolve-repeat-login", "First Again")
+    assert first == second  # same account both times, not a new one
+
+
+async def test_resolve_login_updates_display_name_on_repeat_login():
+    await access_control.resolve_login("steam", "76500000000000010", "Old Name")
+    await access_control.resolve_login("steam", "76500000000000010", "Refreshed Name")
+    identity = await database.get_user_identity("steam", "76500000000000010")
+    assert identity.display_name == "Refreshed Name"
+
+
+async def test_resolve_login_denies_when_existing_user_not_allowed():
+    canonical = await access_control.resolve_login("github", "resolve-to-disable", "X")
+    user_id = int(canonical.removeprefix("user:"))
+    await database.update_user_flags(user_id, allowed=False)
+    result = await access_control.resolve_login("github", "resolve-to-disable", "X")
+    assert result is None
+
+
+async def test_resolve_login_denies_when_provider_unconfigured(monkeypatch):
+    monkeypatch.setattr(identity_providers, "STEAM_API_KEY", "")  # unconfigured
+    result = await access_control.resolve_login("steam", "76500000000000099", "X")
+    assert result is None
+
+
+async def test_is_session_valid_true_for_allowed_user_false_for_disabled():
+    canonical = await access_control.resolve_login("github", "session-valid-test", "X")
+    assert await access_control.is_session_valid(canonical)
+    user_id = int(canonical.removeprefix("user:"))
+    await database.update_user_flags(user_id, allowed=False)
+    assert not await access_control.is_session_valid(canonical)
+
+
+async def test_is_session_valid_false_for_malformed_username():
+    assert not await access_control.is_session_valid("not-a-canonical-id")
+    assert not await access_control.is_session_valid("user:not-a-number")

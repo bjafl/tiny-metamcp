@@ -10,14 +10,70 @@ tool-list/dispatch handlers (aggregator.py), and the auth flows
 import hashlib
 import secrets
 
-from . import identity_providers
+from . import database, identity_providers
 from .config import ADMIN_USERS, GITHUB_ALLOWED_USERS, STEAM_ALLOWED_USERS
 from .database import (
     get_username_by_token_hash,
     list_servers,
     set_personal_token,
 )
-from .models import Server, ServerVisibility
+from .models import Server, ServerVisibility, User
+
+
+def _parse_user_id(username: str) -> int | None:
+    prefix, sep, raw = username.partition(":")
+    if prefix != "user" or not sep or not raw.isdigit():
+        return None
+    return int(raw)
+
+
+async def _get_user(username: str) -> User | None:
+    user_id = _parse_user_id(username)
+    if user_id is None:
+        return None
+    return await database.get_user(user_id)
+
+
+async def resolve_login(provider: str, raw_id: str, display_name: str) -> str | None:
+    """Given a freshly-verified provider identity, return the canonical
+    "user:<id>" session identity, or None if this person may not log in.
+    Auto-provisions a new User on first login for identities covered by
+    the allow-list (or when that provider's allow-list is empty --
+    unrestricted, matching this project's pre-account-linking semantics)."""
+    provider_impl = identity_providers.get_provider(provider)
+    if provider_impl is None or not provider_impl.is_configured():
+        return None
+
+    identity = await database.get_user_identity(provider, raw_id)
+    if identity is not None:
+        user = await database.get_user(identity.user_id)
+        if user is None or not user.allowed:
+            return None
+        await database.update_user_identity_display_name(identity.id, display_name)
+        return f"user:{user.id}"
+
+    allowed_row = await database.get_allowed_identity(provider, raw_id)
+    provider_is_restricted = await database.has_any_allowed_identity(provider)
+    if allowed_row is None and provider_is_restricted:
+        return None
+
+    new_user = await database.create_user(
+        is_admin=allowed_row.grant_admin if allowed_row else False
+    )
+    await database.create_user_identity(new_user.id, provider, raw_id, display_name)
+    if allowed_row is not None:
+        await database.delete_allowed_identity(allowed_row.id)
+    return f"user:{new_user.id}"
+
+
+async def is_session_valid(username: str) -> bool:
+    """True if `username` ("user:<id>") refers to a User that still exists
+    and is allowed. Used to re-validate a standing session cookie or
+    personal token on every request -- see the spec's note on why
+    provider-configured-ness is no longer part of this ongoing check
+    (docs/superpowers/specs/2026-08-24-account-linking-admin-management-design.md)."""
+    user = await _get_user(username)
+    return bool(user and user.allowed)
 
 
 def is_allowed(username: str) -> bool:
