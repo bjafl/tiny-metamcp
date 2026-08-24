@@ -216,3 +216,77 @@ async def test_is_session_valid_true_for_allowed_user_false_for_disabled():
 async def test_is_session_valid_false_for_malformed_username():
     assert not await access_control.is_session_valid("not-a-canonical-id")
     assert not await access_control.is_session_valid("user:not-a-number")
+
+
+async def test_link_identity_attaches_new_identity_to_current_user():
+    user = await _make_user("link-base-user")
+    outcome = await access_control.link_identity(user, "steam", "76500000000000020", "Gamer")
+    assert outcome == "ok"
+    identities = await database.list_user_identities(int(user.removeprefix("user:")))
+    assert any(i.provider == "steam" and i.raw_id == "76500000000000020" for i in identities)
+
+
+async def test_link_identity_idempotent_relink_to_same_user():
+    user = await _make_user("link-idempotent-user")
+    await access_control.link_identity(user, "steam", "76500000000000021", "Gamer")
+    outcome = await access_control.link_identity(user, "steam", "76500000000000021", "Gamer2")
+    assert outcome == "ok"
+    identities = await database.list_user_identities(int(user.removeprefix("user:")))
+    steam_identities = [i for i in identities if i.provider == "steam"]
+    assert len(steam_identities) == 1
+    assert steam_identities[0].display_name == "Gamer2"  # display name refreshed
+
+
+async def test_link_identity_conflict_when_owned_by_different_user():
+    victim = await _make_user("link-conflict-victim")
+    await access_control.link_identity(victim, "steam", "76500000000000022", "Victim's Steam")
+    attacker = await _make_user("link-conflict-attacker")
+    outcome = await access_control.link_identity(attacker, "steam", "76500000000000022", "X")
+    assert outcome == "conflict"
+    # Victim's identity must be untouched.
+    identity = await database.get_user_identity("steam", "76500000000000022")
+    assert identity.user_id == int(victim.removeprefix("user:"))
+
+
+async def test_link_identity_conflict_when_already_has_this_provider():
+    user = await _make_user("link-same-provider-user")  # already has a github identity
+    outcome = await access_control.link_identity(user, "github", "link-second-github", "X")
+    assert outcome == "conflict"
+
+
+async def test_link_identity_invalid_for_disabled_account():
+    user = await _make_user("link-disabled-account")
+    user_id = int(user.removeprefix("user:"))
+    await database.update_user_flags(user_id, allowed=False)
+    outcome = await access_control.link_identity(user, "steam", "76500000000000023", "X")
+    assert outcome == "invalid"
+
+
+async def test_unlink_identity_removes_non_last_identity():
+    user = await _make_user("unlink-base-user")
+    await access_control.link_identity(user, "steam", "76500000000000030", "X")
+    identities = await database.list_user_identities(int(user.removeprefix("user:")))
+    steam_identity = next(i for i in identities if i.provider == "steam")
+    outcome = await access_control.unlink_identity(user, steam_identity.id)
+    assert outcome == "ok"
+    remaining = await database.list_user_identities(int(user.removeprefix("user:")))
+    assert all(i.provider != "steam" for i in remaining)
+
+
+async def test_unlink_identity_refuses_to_remove_last_identity():
+    user = await _make_user("unlink-only-identity-user")
+    identities = await database.list_user_identities(int(user.removeprefix("user:")))
+    outcome = await access_control.unlink_identity(user, identities[0].id)
+    assert outcome == "last_identity"
+    # Must still be there.
+    assert len(await database.list_user_identities(int(user.removeprefix("user:")))) == 1
+
+
+async def test_unlink_identity_not_found_for_wrong_owner():
+    owner = await _make_user("unlink-owner-user")
+    other = await _make_user("unlink-other-user")
+    await access_control.link_identity(owner, "steam", "76500000000000031", "X")
+    identities = await database.list_user_identities(int(owner.removeprefix("user:")))
+    steam_identity = next(i for i in identities if i.provider == "steam")
+    outcome = await access_control.unlink_identity(other, steam_identity.id)
+    assert outcome == "not_found"

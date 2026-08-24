@@ -65,6 +65,58 @@ async def resolve_login(provider: str, raw_id: str, display_name: str) -> str | 
     return f"user:{new_user.id}"
 
 
+async def link_identity(
+    current_username: str, provider: str, raw_id: str, display_name: str
+) -> str:
+    """Attach (provider, raw_id) to the account behind `current_username`
+    ("user:<id>"). Self-service only -- called after the target provider
+    has already verified the identity via its own login flow while the
+    caller was already authenticated as current_username (see
+    admin_auth.handle_link_callback). Returns "ok" on success (including
+    an idempotent re-link of an identity already owned by this same
+    account), "conflict" if the identity is already linked to a
+    *different* account or this account already has a different identity
+    for the same provider, or "invalid" if current_username isn't a real,
+    allowed account."""
+    user = await _get_user(current_username)
+    if user is None or not user.allowed:
+        return "invalid"
+
+    existing = await database.get_user_identity(provider, raw_id)
+    if existing is not None:
+        if existing.user_id != user.id:
+            return "conflict"
+        await database.update_user_identity_display_name(existing.id, display_name)
+        return "ok"
+
+    identities = await database.list_user_identities(user.id)
+    if any(i.provider == provider for i in identities):
+        return "conflict"
+
+    await database.create_user_identity(user.id, provider, raw_id, display_name)
+    return "ok"
+
+
+async def unlink_identity(current_username: str, identity_id: int) -> str:
+    """Remove a linked identity from the account behind `current_username`.
+    Returns "ok", "not_found" (the identity doesn't exist or belongs to a
+    different account -- both look the same to the caller, deliberately,
+    so this can't be used to probe which identities exist), or
+    "last_identity" (refused -- would leave the account with zero ways to
+    log in)."""
+    user = await _get_user(current_username)
+    if user is None:
+        return "not_found"
+    identities = await database.list_user_identities(user.id)
+    target = next((i for i in identities if i.id == identity_id), None)
+    if target is None:
+        return "not_found"
+    if len(identities) <= 1:
+        return "last_identity"
+    await database.delete_user_identity(identity_id)
+    return "ok"
+
+
 async def is_session_valid(username: str) -> bool:
     """True if `username` ("user:<id>") refers to a User that still exists
     and is allowed. Used to re-validate a standing session cookie or
