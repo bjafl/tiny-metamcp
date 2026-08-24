@@ -390,3 +390,235 @@ async def test_user_identity_unique_constraint_rejects_duplicate_provider_raw_id
         session.add(UserIdentity(user_id=user.id, provider="github", raw_id="dup-test"))
         with pytest.raises(IntegrityError):
             await session.commit()
+
+
+async def test_migrate_to_user_accounts_converts_prefixed_strings(tmp_path):
+    """A pre-account-linking deployment has "provider:raw" strings directly
+    in servers.owner_username / personal_tokens.username. This migration
+    must convert each distinct value into a real User + UserIdentity and
+    rewrite the column to "user:<id>" -- verified here against a standalone
+    legacy-shaped DB file, matching the pattern this file's other migration
+    tests already use."""
+    from aggregator.database import _migrate_to_user_accounts
+
+    db_path = tmp_path / "legacy_prefixed.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, allowed BOOLEAN, "
+        "created_at REAL)"
+    )
+    conn.execute(
+        "CREATE TABLE user_identities (id INTEGER PRIMARY KEY, user_id INTEGER, "
+        "provider TEXT, raw_id TEXT, display_name TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE servers (id INTEGER PRIMARY KEY, name TEXT UNIQUE, type TEXT, "
+        "package TEXT, owner_username TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE personal_tokens (username TEXT PRIMARY KEY, token_hash TEXT, "
+        "created_at REAL)"
+    )
+    conn.execute(
+        "INSERT INTO servers (name, type, package, owner_username) VALUES "
+        "('legacy-owned', 'proxy', 'http://x.invalid/mcp', 'github:octocat')"
+    )
+    conn.execute(
+        "INSERT INTO servers (name, type, package, owner_username) VALUES "
+        "('legacy-unowned', 'proxy', 'http://y.invalid/mcp', NULL)"
+    )
+    conn.execute(
+        "INSERT INTO personal_tokens (username, token_hash) VALUES "
+        "('github:octocat', 'hash-1')"  # same identity as the server owner above
+    )
+    conn.commit()
+    conn.close()
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    try:
+        async with engine.begin() as conn:
+            await _migrate_to_user_accounts(conn)
+
+        async with engine.connect() as conn:
+            owned = (
+                await conn.execute(
+                    text("SELECT owner_username FROM servers WHERE name = 'legacy-owned'")
+                )
+            ).fetchone()[0]
+            unowned = (
+                await conn.execute(
+                    text("SELECT owner_username FROM servers WHERE name = 'legacy-unowned'")
+                )
+            ).fetchone()[0]
+            token_username = (
+                await conn.execute(text("SELECT username FROM personal_tokens"))
+            ).fetchone()[0]
+            identity_row = (
+                await conn.execute(
+                    text("SELECT provider, raw_id FROM user_identities WHERE raw_id = 'octocat'")
+                )
+            ).fetchone()
+
+        assert owned.startswith("user:")
+        assert unowned is None  # untouched
+        # Same underlying identity was used in both tables -- must resolve
+        # to the SAME new user, not two different ones.
+        assert token_username == owned
+        assert identity_row == ("github", "octocat")
+    finally:
+        await engine.dispose()
+
+
+async def test_migrate_to_user_accounts_is_idempotent(tmp_path):
+    """Running the migration twice (e.g. a container restart mid-upgrade)
+    must not create duplicate users or double-prefix already-migrated
+    values."""
+    from aggregator.database import _migrate_to_user_accounts
+
+    db_path = tmp_path / "idempotent.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, allowed BOOLEAN, "
+        "created_at REAL)"
+    )
+    conn.execute(
+        "CREATE TABLE user_identities (id INTEGER PRIMARY KEY, user_id INTEGER, "
+        "provider TEXT, raw_id TEXT, display_name TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE servers (id INTEGER PRIMARY KEY, name TEXT UNIQUE, type TEXT, "
+        "package TEXT, owner_username TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE personal_tokens (username TEXT PRIMARY KEY, token_hash TEXT, "
+        "created_at REAL)"
+    )
+    conn.execute(
+        "INSERT INTO servers (name, type, package, owner_username) VALUES "
+        "('idempotent-server', 'proxy', 'http://x.invalid/mcp', 'github:octocat')"
+    )
+    conn.commit()
+    conn.close()
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    try:
+        async with engine.begin() as conn:
+            await _migrate_to_user_accounts(conn)
+        async with engine.begin() as conn:
+            await _migrate_to_user_accounts(conn)  # run again
+
+        async with engine.connect() as conn:
+            user_count = (await conn.execute(text("SELECT COUNT(*) FROM users"))).fetchone()[0]
+            owner = (
+                await conn.execute(
+                    text("SELECT owner_username FROM servers WHERE name = 'idempotent-server'")
+                )
+            ).fetchone()[0]
+        assert user_count == 1
+        assert owner.startswith("user:") and owner.count(":") == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_seed_auth_env_vars_creates_allowed_identities_and_admins(tmp_path, monkeypatch):
+    from aggregator import database
+
+    monkeypatch.setattr(database, "GITHUB_ALLOWED_USERS", {"octocat"})
+    monkeypatch.setattr(database, "STEAM_ALLOWED_USERS", set())
+    monkeypatch.setattr(database, "ADMIN_USERS", {"github:root-admin"})
+
+    db_path = tmp_path / "seed.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, allowed BOOLEAN, "
+        "created_at REAL)"
+    )
+    conn.execute(
+        "CREATE TABLE user_identities (id INTEGER PRIMARY KEY, user_id INTEGER, "
+        "provider TEXT, raw_id TEXT, display_name TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE allowed_identities (id INTEGER PRIMARY KEY, provider TEXT, "
+        "raw_id TEXT, grant_admin BOOLEAN)"
+    )
+    conn.execute("CREATE TABLE auth_seed_state (id INTEGER PRIMARY KEY, seeded BOOLEAN)")
+    conn.commit()
+    conn.close()
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    try:
+        async with engine.begin() as conn:
+            await database._seed_auth_env_vars(conn)
+
+        async with engine.connect() as conn:
+            allowed_rows = (
+                await conn.execute(text("SELECT provider, raw_id FROM allowed_identities"))
+            ).fetchall()
+            admin_row = (
+                await conn.execute(
+                    text(
+                        "SELECT u.is_admin FROM users u "
+                        "JOIN user_identities ui ON ui.user_id = u.id "
+                        "WHERE ui.provider = 'github' AND ui.raw_id = 'root-admin'"
+                    )
+                )
+            ).fetchone()
+            seeded = (
+                await conn.execute(text("SELECT seeded FROM auth_seed_state WHERE id = 1"))
+            ).fetchone()[0]
+
+        assert ("github", "octocat") in allowed_rows
+        assert admin_row == (1,)
+        assert seeded == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_seed_auth_env_vars_runs_only_once(tmp_path, monkeypatch):
+    """A second call (e.g. next container restart) must not re-seed, even
+    if the env vars still contain values -- otherwise an admin who
+    deliberately emptied allowed_identities would have it silently
+    repopulated from a stale .env."""
+    from aggregator import database
+
+    monkeypatch.setattr(database, "GITHUB_ALLOWED_USERS", {"octocat"})
+    monkeypatch.setattr(database, "STEAM_ALLOWED_USERS", set())
+    monkeypatch.setattr(database, "ADMIN_USERS", set())
+
+    db_path = tmp_path / "seed_once.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, allowed BOOLEAN, "
+        "created_at REAL)"
+    )
+    conn.execute(
+        "CREATE TABLE user_identities (id INTEGER PRIMARY KEY, user_id INTEGER, "
+        "provider TEXT, raw_id TEXT, display_name TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE allowed_identities (id INTEGER PRIMARY KEY, provider TEXT, "
+        "raw_id TEXT, grant_admin BOOLEAN)"
+    )
+    conn.execute("CREATE TABLE auth_seed_state (id INTEGER PRIMARY KEY, seeded BOOLEAN)")
+    conn.commit()
+    conn.close()
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    try:
+        async with engine.begin() as conn:
+            await database._seed_auth_env_vars(conn)
+
+        # Admin deliberately empties the allow-list.
+        async with engine.begin() as conn:
+            await conn.execute(text("DELETE FROM allowed_identities"))
+
+        async with engine.begin() as conn:
+            await database._seed_auth_env_vars(conn)  # runs again on next restart
+
+        async with engine.connect() as conn:
+            count = (
+                await conn.execute(text("SELECT COUNT(*) FROM allowed_identities"))
+            ).fetchone()[0]
+        assert count == 0  # stayed empty -- not silently repopulated
+    finally:
+        await engine.dispose()

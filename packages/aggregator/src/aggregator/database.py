@@ -1,4 +1,5 @@
 import json
+import time
 
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlmodel import SQLModel, select
 
-from .config import DB_PATH
+from .config import ADMIN_USERS, DB_PATH, GITHUB_ALLOWED_USERS, STEAM_ALLOWED_USERS
 from .models import (  # noqa: F401 – re-exported for callers
     OAuthToken,
     PersonalToken,
@@ -97,6 +98,141 @@ async def _migrate_identity_prefixes(conn: AsyncConnection) -> None:
     await conn.run_sync(_sync)
 
 
+async def _migrate_to_user_accounts(conn: AsyncConnection) -> None:
+    """Pre-account-linking deployments store a raw "provider:raw_id" string
+    directly in servers.owner_username / personal_tokens.username. Convert
+    each distinct value into a real User + UserIdentity, then rewrite the
+    column to the new canonical "user:<id>" form. Pure format conversion --
+    no two distinct old values are ever merged into the same account here;
+    merging only ever happens through the self-service linking flow from
+    now on (access_control.link_identity). Idempotent: a value already
+    shaped "user:<digits>" is left untouched, so re-running this on an
+    already-migrated deployment or a fresh install is a no-op. Must run
+    after create_all() and _migrate_server_columns()/_migrate_identity_prefixes()
+    -- both tables must already have their final column set, and any bare
+    (non-prefixed) legacy value must already have been prefixed."""
+
+    def _sync(sync_conn):
+        now = time.time()
+        seen: dict[tuple[str, str], int] = {}
+
+        def _canonical_for(value: str | None) -> str | None:
+            if not value or not value.strip():
+                return value
+            if value.startswith("user:") and value.removeprefix("user:").isdigit():
+                return value  # already migrated
+            provider, sep, raw_id = value.partition(":")
+            if not sep:
+                return value  # not a "provider:raw" shape -- nothing sane to do, leave it
+            key = (provider, raw_id)
+            if key not in seen:
+                result = sync_conn.execute(
+                    text("INSERT INTO users (is_admin, allowed, created_at) VALUES (0, 1, :now)"),
+                    {"now": now},
+                )
+                user_id = result.lastrowid
+                sync_conn.execute(
+                    text(
+                        "INSERT INTO user_identities (user_id, provider, raw_id, display_name) "
+                        "VALUES (:user_id, :provider, :raw_id, NULL)"
+                    ),
+                    {"user_id": user_id, "provider": provider, "raw_id": raw_id},
+                )
+                seen[key] = user_id
+            return f"user:{seen[key]}"
+
+        for server_id, owner in sync_conn.execute(
+            text("SELECT id, owner_username FROM servers WHERE owner_username IS NOT NULL")
+        ).fetchall():
+            new_value = _canonical_for(owner)
+            if new_value != owner:
+                sync_conn.execute(
+                    text("UPDATE servers SET owner_username = :v WHERE id = :id"),
+                    {"v": new_value, "id": server_id},
+                )
+
+        for (old_username,) in sync_conn.execute(
+            text("SELECT username FROM personal_tokens")
+        ).fetchall():
+            new_value = _canonical_for(old_username)
+            if new_value != old_username:
+                sync_conn.execute(
+                    text("UPDATE personal_tokens SET username = :v WHERE username = :old"),
+                    {"v": new_value, "old": old_username},
+                )
+
+    await conn.run_sync(_sync)
+
+
+async def _seed_auth_env_vars(conn: AsyncConnection) -> None:
+    """GITHUB_ALLOWED_USERS/STEAM_ALLOWED_USERS/ADMIN_USERS are now only
+    ever consulted here, exactly once -- after this runs, allow-lists and
+    admin rights live entirely in the allowed_identities/users tables,
+    managed from the webui (api/users_router.py). Gated by a dedicated
+    auth_seed_state row, not table emptiness: an admin who deliberately
+    empties allowed_identities later must not have it silently
+    repopulated by a stale .env on the next restart. Must run after
+    _migrate_to_user_accounts() -- an ADMIN_USERS entry that already has a
+    User (because they already owned a server or held a personal token)
+    gets is_admin=1 set directly rather than a duplicate account created."""
+
+    def _sync(sync_conn):
+        row = sync_conn.execute(text("SELECT seeded FROM auth_seed_state WHERE id = 1")).fetchone()
+        if row is None:
+            sync_conn.execute(text("INSERT INTO auth_seed_state (id, seeded) VALUES (1, 0)"))
+        elif row[0]:
+            return  # already seeded -- these three env vars are now inert
+
+        now = time.time()
+
+        for raw_id in GITHUB_ALLOWED_USERS:
+            sync_conn.execute(
+                text(
+                    "INSERT OR IGNORE INTO allowed_identities (provider, raw_id, grant_admin) "
+                    "VALUES ('github', :raw_id, 0)"
+                ),
+                {"raw_id": raw_id},
+            )
+        for raw_id in STEAM_ALLOWED_USERS:
+            sync_conn.execute(
+                text(
+                    "INSERT OR IGNORE INTO allowed_identities (provider, raw_id, grant_admin) "
+                    "VALUES ('steam', :raw_id, 0)"
+                ),
+                {"raw_id": raw_id},
+            )
+
+        for entry in ADMIN_USERS:
+            provider, sep, raw_id = entry.partition(":")
+            if not sep:
+                continue  # malformed (missing prefix) -- skip, matches the old default-deny
+            existing = sync_conn.execute(
+                text("SELECT user_id FROM user_identities WHERE provider = :p AND raw_id = :r"),
+                {"p": provider, "r": raw_id},
+            ).fetchone()
+            if existing is not None:
+                sync_conn.execute(
+                    text("UPDATE users SET is_admin = 1 WHERE id = :id"), {"id": existing[0]}
+                )
+            else:
+                result = sync_conn.execute(
+                    text("INSERT INTO users (is_admin, allowed, created_at) VALUES (1, 1, :now)"),
+                    {"now": now},
+                )
+                new_user_id = result.lastrowid
+                sync_conn.execute(
+                    text(
+                        "INSERT INTO user_identities (user_id, provider, raw_id, display_name) "
+                        "VALUES (:user_id, :provider, :raw_id, NULL)"
+                    ),
+                    {"user_id": new_user_id, "provider": provider, "raw_id": raw_id},
+                )
+
+        sync_conn.execute(text("UPDATE auth_seed_state SET seeded = 1 WHERE id = 1"))
+
+    await conn.run_sync(_sync)
+
+
 async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with _engine.begin() as conn:
@@ -104,6 +240,8 @@ async def init_db() -> None:
         await conn.run_sync(SQLModel.metadata.create_all)
         await _migrate_server_columns(conn)
         await _migrate_identity_prefixes(conn)
+        await _migrate_to_user_accounts(conn)
+        await _seed_auth_env_vars(conn)
 
 
 # ── Servers ───────────────────────────────────────────────────────────────────
