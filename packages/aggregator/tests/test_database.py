@@ -21,7 +21,7 @@ from aggregator.database import (
     set_personal_token,
     update_server,
 )
-from aggregator.models import ServerType, ServerVisibility
+from aggregator.models import AllowedIdentity, AuthSeedState, ServerType, ServerVisibility, User, UserIdentity
 
 
 async def _cleanup(server_id: int) -> None:
@@ -339,3 +339,54 @@ async def test_migrate_identity_prefixes_leaves_already_prefixed_values_alone(tm
         assert token_row == ("github:octocat",)
     finally:
         await engine.dispose()
+
+
+async def test_user_and_identity_tables_round_trip():
+    """Smoke test: the new tables exist (created by init_db()'s
+    create_all(), already run once for the whole session by conftest.py's
+    _init_db fixture) and a row written through the ORM reads back
+    unchanged."""
+    from aggregator.database import _session_factory
+
+    async with _session_factory() as session:
+        user = User(is_admin=True)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        identity = UserIdentity(
+            user_id=user.id, provider="github", raw_id="model-test-user", display_name="Tester"
+        )
+        session.add(identity)
+        await session.commit()
+        await session.refresh(identity)
+
+        allowed = AllowedIdentity(provider="steam", raw_id="76500000000000001", grant_admin=False)
+        session.add(allowed)
+        await session.commit()
+        await session.refresh(allowed)
+
+    assert user.id is not None
+    assert user.allowed is True  # default
+    assert identity.id is not None
+    assert identity.user_id == user.id
+    assert allowed.id is not None
+
+
+async def test_user_identity_unique_constraint_rejects_duplicate_provider_raw_id():
+    from sqlalchemy.exc import IntegrityError
+
+    from aggregator.database import _session_factory
+
+    async with _session_factory() as session:
+        user = User()
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        session.add(UserIdentity(user_id=user.id, provider="github", raw_id="dup-test"))
+        await session.commit()
+
+    async with _session_factory() as session:
+        session.add(UserIdentity(user_id=user.id, provider="github", raw_id="dup-test"))
+        with pytest.raises(IntegrityError):
+            await session.commit()

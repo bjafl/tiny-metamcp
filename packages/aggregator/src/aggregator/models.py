@@ -2,6 +2,7 @@ import json
 import time as _time
 from enum import StrEnum
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -58,3 +59,44 @@ class PersonalToken(SQLModel, table=True):
     username: str = Field(primary_key=True)
     token_hash: str = Field(unique=True, index=True)
     created_at: float = Field(default_factory=_time.time)
+
+
+class User(SQLModel, table=True):
+    __tablename__ = "users"
+
+    id: int | None = Field(default=None, primary_key=True)
+    is_admin: bool = Field(default=False)
+    allowed: bool = Field(default=True)  # single account-wide revoke switch
+    created_at: float = Field(default_factory=_time.time)
+
+
+class UserIdentity(SQLModel, table=True):
+    __tablename__ = "user_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "raw_id", name="uq_user_identities_provider_raw_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    provider: str  # "github" / "steam"
+    raw_id: str  # unprefixed provider-native id (GitHub login / SteamID64)
+    display_name: str | None = Field(default=None)  # last-seen persona name
+
+
+class AllowedIdentity(SQLModel, table=True):
+    __tablename__ = "allowed_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "raw_id", name="uq_allowed_identities_provider_raw_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider: str
+    raw_id: str
+    grant_admin: bool = Field(default=False)
+
+
+class AuthSeedState(SQLModel, table=True):
+    __tablename__ = "auth_seed_state"
+
+    id: int = Field(default=1, primary_key=True)
+    seeded: bool = Field(default=False)
