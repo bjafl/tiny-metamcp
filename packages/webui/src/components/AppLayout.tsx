@@ -41,6 +41,15 @@ export function AppLayout() {
             >
               Account
             </Link>
+            {me?.is_admin ? (
+              <Link
+                to="/users"
+                activeProps={{ className: "font-semibold text-foreground" }}
+                className="text-sm text-muted-foreground"
+              >
+                Users
+              </Link>
+            ) : null}
           </div>
           <div className="flex items-center gap-3 text-sm text-muted-foreground">
             <ThemeToggle />

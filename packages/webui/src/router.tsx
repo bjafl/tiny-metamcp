@@ -13,6 +13,7 @@ import { ServersPage } from "@/components/ServersPage";
 import { LogsPage } from "@/components/LogsPage";
 import { ToolTesterPage } from "@/components/ToolTesterPage";
 import { AccountPage } from "@/components/AccountPage";
+import { UsersPage } from "@/components/UsersPage";
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -68,9 +69,15 @@ export const accountRoute = createRoute({
   component: AccountPage,
 });
 
+export const usersRoute = createRoute({
+  getParentRoute: () => authedLayoutRoute,
+  path: "/users",
+  component: UsersPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
-  authedLayoutRoute.addChildren([serversRoute, logsRoute, testerRoute, accountRoute]),
+  authedLayoutRoute.addChildren([serversRoute, logsRoute, testerRoute, accountRoute, usersRoute]),
 ]);
 
 export function createAppRouter(queryClient: QueryClient) {
