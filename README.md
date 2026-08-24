@@ -29,6 +29,7 @@ MCP Client (Claude Web UI, Claude Desktop, etc.)
 - **MCP client → `/mcp`** — OAuth 2.1 + PKCE (Claude Web UI connectors, choosing a provider if more than one is configured) or a personal API token (Claude Desktop etc. — generate one from the webui's Account page after logging in).
 - **Claude Web UI** — Full OAuth 2.1 flow: discovery → dynamic client registration → PKCE authorize → provider login → token exchange. No manual token needed.
 - **Identity across providers** — a GitHub login and a Steam login are always separate identities in this system (`"github:octocat"` vs `"steam:76561198012345678"`) — there's no account linking. `ADMIN_USERS` values must include the provider prefix.
+- **Account linking** — while logged in, link a second provider from the Account page (self-service; both identities must be logged into directly, no admin override). Linked identities reach the same account either way.
 
 ## Upgrading
 
@@ -57,6 +58,7 @@ one-time effects:
   cookies issued before the upgrade predate the new cookie payload shape
   and are treated as invalid on first visit after upgrading. Logging in
   again resolves this — it's expected, not a bug.
+- **Allow-lists and `ADMIN_USERS` become one-time seed values.** On first startup after upgrading, `GITHUB_ALLOWED_USERS`/`STEAM_ALLOWED_USERS`/`ADMIN_USERS` are read once into the database and then have **no further effect** — manage allow-lists and admin rights from the webui's Users page from then on. Editing these in `.env`/Coolify after the first startup does nothing.
 
 ## Prerequisites
 
@@ -186,6 +188,16 @@ Go to `https://<MCP_DOMAIN>/admin` — sign in with GitHub or Steam (whichever i
 - **Logs** — view aggregator logs and child process stderr in real time (live SSE stream)
 - **Tool Tester** — select a running server and tool, fill in JSON arguments, and call it directly
 - **Account** — view your username/admin status, generate a personal API token for MCP clients (Claude Desktop etc.)
+
+### User management (admins)
+
+The **Users** nav link (admin-only) shows every account, its linked
+identities, and toggles for admin rights and whether the account may still
+log in. A second section manages the "pending identities" allow-list — add
+a raw GitHub login or SteamID64 there to pre-approve someone before they've
+ever logged in (optionally granting admin immediately). Leave a provider's
+allow-list empty to let anyone with that provider sign in, same as the old
+env-var default.
 
 ### REST API
 
