@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _signer = URLSafeTimedSerializer(SESSION_SECRET, salt="admin-session")
 _state_signer = URLSafeTimedSerializer(SESSION_SECRET, salt="admin-oauth-state")
+_link_state_signer = URLSafeTimedSerializer(SESSION_SECRET, salt="admin-link-state")
 
 SESSION_MAX_AGE = 7 * 86_400  # 7 days
 STATE_MAX_AGE = 600  # 10 minutes
@@ -151,4 +152,68 @@ async def handle_callback(request: Request, provider: IdentityProvider) -> Redir
         samesite="lax",
     )
     response.delete_cookie("admin_oauth_state")
+    return response
+
+
+async def login_redirect_for_link(request: Request, provider: IdentityProvider) -> RedirectResponse:
+    """Start `provider`'s login flow to link a new identity onto the
+    CURRENTLY authenticated session's account. Raises 401 if there's no
+    valid session -- this route must never accept a forged/anonymous
+    "link to user X" request. The account to link onto is read from the
+    server-signed session cookie, then re-signed into the state cookie
+    below -- it can't be supplied or tampered with by the client."""
+    current_user = await get_session_user(request)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    state = secrets.token_urlsafe(32)
+    state_token = _link_state_signer.dumps({"state": state, "user": current_user})
+    response = provider.login_redirect(state)
+    response.set_cookie(
+        "link_identity_state",
+        state_token,
+        httponly=True,
+        max_age=STATE_MAX_AGE,
+        samesite="lax",
+    )
+    return response
+
+
+def _link_error(msg: str) -> RedirectResponse:
+    response = RedirectResponse(
+        f"/admin/account?link_error={urllib.parse.quote(msg)}", status_code=302
+    )
+    response.delete_cookie("link_identity_state")
+    return response
+
+
+async def handle_link_callback(request: Request, provider: IdentityProvider) -> RedirectResponse:
+    """Handle an identity provider's callback for the self-service account
+    linking flow, then redirect back to the Account page."""
+    state_token = request.cookies.get("link_identity_state")
+    if not state_token:
+        return _link_error("Missing state cookie — possible CSRF")
+    try:
+        stored = _link_state_signer.loads(state_token, max_age=STATE_MAX_AGE)
+    except BadSignature, SignatureExpired:
+        return _link_error("Invalid or expired state — please try again")
+    request_state = request.query_params.get("state")
+    if not request_state or not secrets.compare_digest(request_state, stored["state"]):
+        return _link_error("State mismatch — please try again")
+
+    result = await provider.resolve_callback(request)
+    if result is None:
+        return _link_error("Authentication error — please try again")
+
+    provider_slug, _, raw_id = result.username.partition(":")
+    outcome = await access_control.link_identity(
+        stored["user"], provider_slug, raw_id, result.display_name
+    )
+    if outcome != "ok":
+        return _link_error(
+            "That account is already linked to a different user"
+            if outcome == "conflict"
+            else "Your session is no longer valid — please log in again"
+        )
+    response = RedirectResponse("/admin/account", status_code=302)
+    response.delete_cookie("link_identity_state")
     return response

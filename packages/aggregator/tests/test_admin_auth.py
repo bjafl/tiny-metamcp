@@ -201,3 +201,79 @@ async def test_handle_callback_rejects_when_provider_returns_none():
     response = await admin_auth.handle_callback(request, provider)
     assert response.status_code == 302
     assert "error=" in response.headers["location"]
+
+
+async def test_login_redirect_for_link_requires_authenticated_session():
+    provider = _FakeProvider()
+    request = Request({"type": "http", "headers": []})
+    with pytest.raises(HTTPException) as exc_info:
+        await admin_auth.login_redirect_for_link(request, provider)
+    assert exc_info.value.status_code == 401
+
+
+async def test_login_redirect_for_link_sets_state_cookie_when_authenticated():
+    from aggregator import access_control
+
+    canonical = await access_control.resolve_login("github", "link-redirect-user", "X")
+    cookie = _session_cookie(canonical, "X")
+    request = Request(
+        {"type": "http", "headers": [(b"cookie", f"admin_session={cookie}".encode())]}
+    )
+    provider = _FakeProvider()
+    response = await admin_auth.login_redirect_for_link(request, provider)
+    assert response.status_code == 302
+    assert "fake-provider.example" in response.headers["location"]
+    assert "link_identity_state=" in response.headers.get("set-cookie", "")
+
+
+async def test_handle_link_callback_attaches_identity_to_current_user():
+    from aggregator import access_control, database
+
+    canonical = await access_control.resolve_login("github", "link-callback-user", "X")
+    cookie = _session_cookie(canonical, "X")
+    login_request = Request(
+        {"type": "http", "headers": [(b"cookie", f"admin_session={cookie}".encode())]}
+    )
+    provider = _FakeProvider()
+    login_response = await admin_auth.login_redirect_for_link(login_request, provider)
+    state_cookie = login_response.headers["set-cookie"]
+    cookie_value = state_cookie.split("link_identity_state=")[1].split(";")[0]
+    stored = admin_auth._link_state_signer.loads(cookie_value, max_age=admin_auth.STATE_MAX_AGE)
+
+    provider.resolve_callback = AsyncMock(
+        return_value=ProviderResult(username="steam:76500000000000040", display_name="Gamer")
+    )
+    callback_request = Request(
+        {
+            "type": "http",
+            "query_string": f"state={stored['state']}".encode(),
+            "headers": [(b"cookie", f"link_identity_state={cookie_value}".encode())],
+        }
+    )
+    response = await admin_auth.handle_link_callback(callback_request, provider)
+    assert response.status_code == 302
+
+    identities = await database.list_user_identities(int(canonical.removeprefix("user:")))
+    assert any(i.provider == "steam" and i.raw_id == "76500000000000040" for i in identities)
+
+
+async def test_handle_link_callback_rejects_state_mismatch():
+    provider = _FakeProvider()
+    request = Request(
+        {
+            "type": "http",
+            "query_string": b"state=wrong-state",
+            "headers": [
+                (
+                    b"cookie",
+                    b"link_identity_state="
+                    + admin_auth._link_state_signer.dumps(
+                        {"state": "real-state", "user": "user:1"}
+                    ).encode(),
+                )
+            ],
+        }
+    )
+    response = await admin_auth.handle_link_callback(request, provider)
+    assert response.status_code == 302
+    assert "link_error=" in response.headers["location"]
